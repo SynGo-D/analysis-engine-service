@@ -31,5 +31,10 @@ class Settings(BaseSettings):
     # this.
     consumer_prefetch_count: int = 1
 
+    # Per-command timeout for git operations against untrusted repository
+    # data — bounds a hung/slow clone rather than blocking a worker
+    # indefinitely.
+    git_clone_timeout_seconds: float = 60.0
+
 
 settings = Settings()

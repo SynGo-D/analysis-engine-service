@@ -113,8 +113,8 @@ Built incrementally, one phase at a time:
 1. ✅ Project structure + infrastructure
 2. ✅ Domain models (`AnalysisJob`, `Finding`, `AnalysisResult`)
 3. ✅ RabbitMQ consumer (`pr_queue`, correlation IDs, job validation)
-4. Workspace manager (isolated temp workspace, secure clone/checkout)
-5. Language detection + analyzer abstraction (Strategy) + Factory Pattern
+4. ✅ Workspace manager (isolated temp workspace, secure clone/checkout)
+5. ✅ Language detection + analyzer abstraction (Strategy) + Factory Pattern
 6. Analyzer adapters (ESLint, Pylint, Radon, Cppcheck) + Reviewdog integration
 7. Finding normalization + fingerprint/deduplication
 8. Quality/technical-debt metrics calculation (SQALE-oriented)
