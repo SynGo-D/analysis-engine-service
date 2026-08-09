@@ -1,0 +1,31 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: analysis-engine-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: analysis_engine_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      # 5434: integration-service occupies native Postgres on 5432,
+      # webhook-listener's containerized Postgres occupies 5433.
+      - "5434:5432"
+    volumes:
+      - analysis_engine_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d analysis_engine_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # No RabbitMQ service here, deliberately. This service consumes from
+  # pr_queue, which only exists on the SAME broker webhook-listener
+  # publishes to (its own docker-compose stands that up on :5672).
+  # Standing up a second independent broker here would silently fragment
+  # the message bus — webhook-listener would publish to one instance while
+  # this service listens on another, and nothing would ever arrive.
+  # Point RABBITMQ_URL (.env) at that existing shared broker instead.
+
+volumes:
+  analysis_engine_postgres_data:
