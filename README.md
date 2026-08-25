@@ -88,16 +88,25 @@ start that one first.
 # 1. Start this service's own Postgres (its own DB, port 5434)
 docker compose up -d
 
-# 2. Create and activate a virtualenv, install dependencies
+# 2. Create and activate a virtualenv, install Python dependencies
+#    (includes Pylint, Radon, and Cppcheck — see tools/README.md)
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
 
-# 3. Copy env config (already matches docker-compose.yml's ports/credentials,
+# 3. Set up this service's own ESLint toolchain (never the analyzed
+#    repository's own eslint/devDependencies — see analyzers/README.md)
+cd tools/eslint && npm install && cd ../..
+
+# 4. Install Reviewdog (prebuilt binary, no Go toolchain needed)
+curl -sfL https://raw.githubusercontent.com/reviewdog/reviewdog/master/install.sh \
+  | sh -s -- -b .tools-bin
+
+# 5. Copy env config (already matches docker-compose.yml's ports/credentials,
 #    and assumes webhook-listener's shared RabbitMQ is already running)
 cp .env.example .env
 
-# 4. Start the service
+# 6. Start the service
 uvicorn analysis_engine.main:app --reload --app-dir src --port 8000
 ```
 
@@ -115,8 +124,8 @@ Built incrementally, one phase at a time:
 3. ✅ RabbitMQ consumer (`pr_queue`, correlation IDs, job validation)
 4. ✅ Workspace manager (isolated temp workspace, secure clone/checkout)
 5. ✅ Language detection + analyzer abstraction (Strategy) + Factory Pattern
-6. Analyzer adapters (ESLint, Pylint, Radon, Cppcheck) + Reviewdog integration
-7. Finding normalization + fingerprint/deduplication
+6. ✅ Analyzer adapters (ESLint, Pylint, Radon, Cppcheck) + Reviewdog integration
+7. ✅ Finding normalization + fingerprint/deduplication
 8. Quality/technical-debt metrics calculation (SQALE-oriented)
 9. Persistence (Postgres, Mongo if justified)
 10. Publish completion/failure events + idempotent job tracking + retry/DLQ

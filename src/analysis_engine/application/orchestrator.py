@@ -1,4 +1,14 @@
-from ..domain import AnalysisJob, AnalysisResult
+import asyncio
+import logging
+from datetime import datetime, timezone
+
+from .finding_normalizer import FindingNormalizer
+from ..analyzers import Analyzer
+from ..domain import AnalysisJob, AnalysisResult, Finding
+from ..factories import AnalyzerFactory, detect_languages
+from ..workspace import WorkspaceManager
+
+logger = logging.getLogger(__name__)
 
 
 class AnalysisOrchestrator:
@@ -13,14 +23,81 @@ class AnalysisOrchestrator:
 
     This is the only place that sequence is encoded (Pipeline/Command
     Pattern) — the consumer just calls `run()` and turns the outcome into
-    an ack/nack. Filled in incrementally across Phases 4-10; each stage's
-    real implementation replaces a piece of this stub without the
-    consumer changing at all.
+    an ack/nack. `technical_debt` calculation (Phase 8), persistence
+    (Phase 9), and publishing the completion event (Phase 10) are still
+    outstanding — this phase wires everything up through normalization,
+    the first point the pipeline can be exercised end-to-end as one flow.
     """
 
+    def __init__(
+        self,
+        workspace_manager: WorkspaceManager | None = None,
+        analyzer_factory: AnalyzerFactory | None = None,
+        finding_normalizer: FindingNormalizer | None = None,
+    ):
+        self._workspace_manager = workspace_manager or WorkspaceManager()
+        self._analyzer_factory = analyzer_factory or AnalyzerFactory()
+        self._finding_normalizer = finding_normalizer or FindingNormalizer()
+
     async def run(self, job: AnalysisJob) -> AnalysisResult:
-        raise NotImplementedError(
-            "AnalysisOrchestrator.run is implemented incrementally across "
-            "Phases 4-10 (workspace, analyzers, normalization, technical "
-            "debt, persistence, completion events)."
+        started_at = datetime.now(timezone.utc)
+
+        async with self._workspace_manager.prepare(job) as workspace:
+            languages = detect_languages(workspace.path)
+            logger.info("[job:%s] detected languages: %s", job.job_id, sorted(languages))
+
+            analyzers = self._analyzer_factory.create_for_languages(languages)
+            logger.info(
+                "[job:%s] selected analyzers: %s", job.job_id, [a.tool_name for a in analyzers]
+            )
+
+            # Analyzers are independent — each only reads the checked-out
+            # workspace, none write to it — so there's no reason to run
+            # them one at a time.
+            results = await asyncio.gather(
+                *(analyzer.analyze(workspace, job) for analyzer in analyzers),
+                return_exceptions=True,
+            )
+
+        raw_findings, failed_tools = self._collect_results(analyzers, results, job)
+
+        # If every selected analyzer failed, the job itself failed — a
+        # "completed" result with zero findings would misrepresent an
+        # outage as "nothing to report". If only *some* failed, the job
+        # still completes with whatever findings the others genuinely
+        # produced — one tool's failure shouldn't discard real results
+        # from the rest.
+        all_failed = bool(analyzers) and len(failed_tools) == len(analyzers)
+
+        findings = self._finding_normalizer.normalize(raw_findings)
+
+        return AnalysisResult(
+            job_id=job.job_id,
+            repository=job.repository,
+            pull_request_number=job.pull_request_number,
+            commit_sha=job.commit_sha,
+            status="failed" if all_failed else "completed",
+            findings=findings,
+            started_at=started_at,
+            completed_at=datetime.now(timezone.utc),
+            error_message="; ".join(failed_tools) if all_failed else None,
+            # technical_debt left at its default (all-zero) — Phase 8.
         )
+
+    def _collect_results(
+        self,
+        analyzers: list[Analyzer],
+        results: list[list[Finding] | BaseException],
+        job: AnalysisJob,
+    ) -> tuple[list[Finding], list[str]]:
+        raw_findings: list[Finding] = []
+        failed_tools: list[str] = []
+
+        for analyzer, result in zip(analyzers, results):
+            if isinstance(result, BaseException):
+                logger.error("[job:%s] %s failed: %s", job.job_id, analyzer.tool_name, result)
+                failed_tools.append(f"{analyzer.tool_name}: {result}")
+                continue
+            raw_findings.extend(result)
+
+        return raw_findings, failed_tools

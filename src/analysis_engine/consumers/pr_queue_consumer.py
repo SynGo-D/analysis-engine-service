@@ -7,8 +7,9 @@ from pydantic import ValidationError
 
 from ..application.orchestrator import AnalysisOrchestrator
 from ..config import settings
-from ..domain import AnalysisJob
+from ..domain import AnalysisJob, AnalysisResult
 from ..messaging.topology import PR_QUEUE_NAME
+from ..repositories.analysis_result_repository import AnalysisResultRepository
 
 logger = logging.getLogger(__name__)
 
@@ -23,8 +24,9 @@ class PRQueueConsumer:
     persistence logic belongs here.
     """
 
-    def __init__(self, orchestrator: AnalysisOrchestrator):
+    def __init__(self, orchestrator: AnalysisOrchestrator, repository: AnalysisResultRepository):
         self._orchestrator = orchestrator
+        self._repository = repository
 
     async def start(self, channel: AbstractRobustChannel) -> None:
         # Bounds how many unacked jobs this worker holds at once — see
@@ -64,9 +66,10 @@ class PRQueueConsumer:
         )
 
         try:
-            await self._orchestrator.run(job)
+            result = await self._orchestrator.run(job)
+            await self._repository.save(result)
             await message.ack()
-            logger.info("[job:%s] completed", job.job_id)
+            self._log_result(job, result)
 
         except Exception as error:
             # Phase 10 refines this: distinguishing transient failures
@@ -77,3 +80,22 @@ class PRQueueConsumer:
             # orchestrator is still a stub (Phases 4-10).
             logger.exception("[job:%s] processing failed: %s", job.job_id, error)
             await message.nack(requeue=False)
+
+    def _log_result(self, job: AnalysisJob, result: AnalysisResult) -> None:
+        """
+        Prints a readable findings summary to the log in addition to the
+        Phase 9 persistence above — useful for following a job live without
+        querying the database, and still the only signal until Phase 10
+        (publishing an analysis.completed event) exists.
+        """
+        logger.info(
+            "[job:%s] %s — %d finding(s) in %s PR#%d (branch %s @ %s)",
+            job.job_id, result.status, len(result.findings),
+            job.repository, job.pull_request_number, job.branch, job.commit_sha[:12],
+        )
+        for finding in result.findings:
+            location = f"{finding.file_path}:{finding.line}" if finding.line else finding.file_path
+            logger.info(
+                "[job:%s]   [%s/%s] %s — %s — %s",
+                job.job_id, finding.tool, finding.severity, location, finding.rule_id, finding.message,
+            )

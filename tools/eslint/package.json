@@ -1,0 +1,12 @@
+{
+  "name": "analysis-engine-eslint-toolchain",
+  "private": true,
+  "description": "ESLint installed for analysis-engine's own use (never the analyzed repository's own eslint/devDependencies) — see workspace/README.md and analyzers/README.md for why running the analyzed repo's own npm install is deliberately avoided.",
+  "dependencies": {
+    "@eslint/js": "^9.0.0",
+    "eslint": "^9.0.0",
+    "globals": "^17.9.0",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.66.0"
+  }
+}

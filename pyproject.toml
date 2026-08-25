@@ -13,6 +13,15 @@ dependencies = [
     "pydantic-settings>=2.6",
     "asyncpg>=0.30",
     "aio-pika>=9.5",
+    # Static-analysis tools this service shells out to (subprocess, never
+    # imported as a library). ESLint isn't a Python package — see
+    # tools/eslint/.
+    "pylint>=4.0",
+    "radon>=6.0",
+    # A manylinux wheel bundling the real compiled cppcheck binary, not a
+    # Python reimplementation — verified end-to-end (see
+    # analyzers/cppcheck_analyzer.py), not just installed and assumed to work.
+    "cppcheck>=1.5",
 ]
 
 [project.optional-dependencies]

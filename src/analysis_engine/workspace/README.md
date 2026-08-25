@@ -20,8 +20,18 @@ Isolated temporary workspace management — one workspace per analysis job.
   actually reliable.
 - Validates `clone_url` (https + allowlisted host only — closes
   SSRF-style abuse via `file://`/arbitrary hosts), `commit_sha` (hex-SHA
-  pattern), and `branch` (rejects a leading `-`, git's own
-  flag-injection vector) *before* any of it reaches a subprocess.
+  pattern), and `branch` *before* any of it reaches a subprocess.
+  `validate_branch` is a **blocklist** matching git's own actual
+  ref-name rules (`git-check-ref-format`), not an arbitrary allowlist —
+  found via a real live webhook delivery for a branch literally named
+  `branch#1`, which the original allowlist (`^[A-Za-z0-9._/-]+$`)
+  rejected outright. `#` is a perfectly valid character in real git
+  branch names; that allowlist was simply wrong, not conservative. Since
+  every git subprocess call here uses argument-list execution
+  (`shell=False`), shell metacharacters like `#` were never actually an
+  injection risk to begin with — the real, still-enforced risk is a
+  branch name starting with `-` (git's own flag-injection vector, since
+  it's git itself parsing argv, independent of shell=False).
 
 Repository source code is treated as untrusted input throughout. Hard
 CPU/memory/network isolation beyond the clone timeout is explicitly out

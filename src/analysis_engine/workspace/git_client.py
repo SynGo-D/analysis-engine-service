@@ -13,7 +13,19 @@ from ..config import settings
 _ALLOWED_HOSTS = {"github.com", "gitlab.com"}
 
 _COMMIT_SHA_PATTERN = re.compile(r"^[0-9a-fA-F]{7,40}$")
-_BRANCH_PATTERN = re.compile(r"^[A-Za-z0-9._/-]+$")
+
+# Real bug, found via a live webhook delivery for a branch named
+# "branch#1": the original validate_branch used an allowlist
+# (^[A-Za-z0-9._/-]+$) that rejected '#' — but '#' is a perfectly valid
+# character in real git branch names (git doesn't restrict it, neither
+# does GitHub), so that allowlist was simply wrong, not conservative.
+# Since every git subprocess call here uses argument-list execution
+# (shell=False — see _run_git), shell metacharacters like '#' were never
+# actually an injection risk to begin with; treating them as one was
+# overcautious in a way that broke legitimate input. Replaced with a
+# blocklist matching git's own actual ref-name rules (git-check-ref-format)
+# instead of an arbitrary narrow allowlist.
+_BRANCH_INVALID_CHARS = re.compile(r"[\x00-\x1f\x7f ~^:?*\[\\]")
 
 
 class WorkspaceSecurityError(Exception):
@@ -48,18 +60,35 @@ def validate_commit_sha(commit_sha: str) -> None:
 
 
 def validate_branch(branch: str) -> None:
+    if not branch:
+        raise WorkspaceSecurityError("Rejected branch name: empty.")
+
     # A branch name starting with '-' is git's own well-known
     # flag-injection vector — e.g. "--upload-pack=/bin/sh" could otherwise
-    # be misread as an option rather than a ref. Checked explicitly even
-    # though the charset pattern below would also reject most such values,
-    # since this is the specific attack this guards against.
+    # be misread as an option rather than a ref. This is a real risk
+    # regardless of shell=False, since it's git itself parsing argv.
     if branch.startswith("-"):
         raise WorkspaceSecurityError(
             "Rejected branch name: must not start with '-' (flag-injection guard)."
         )
 
-    if ".." in branch or not _BRANCH_PATTERN.match(branch):
-        raise WorkspaceSecurityError(f"Rejected branch name: contains disallowed characters: '{branch}'.")
+    if ".." in branch:
+        raise WorkspaceSecurityError(f"Rejected branch name: contains '..': '{branch}'.")
+
+    if branch.startswith("/") or branch.endswith("/") or "//" in branch:
+        raise WorkspaceSecurityError(f"Rejected branch name: invalid slash placement: '{branch}'.")
+
+    if branch.endswith(".") or branch.endswith(".lock"):
+        raise WorkspaceSecurityError(f"Rejected branch name: invalid trailing characters: '{branch}'.")
+
+    if "@{" in branch or branch == "@":
+        raise WorkspaceSecurityError(f"Rejected branch name: contains '@{{' or is '@': '{branch}'.")
+
+    if _BRANCH_INVALID_CHARS.search(branch):
+        raise WorkspaceSecurityError(
+            f"Rejected branch name: contains a control character or a git-reserved character "
+            f"(space, ~, ^, :, ?, *, [, \\): '{branch}'."
+        )
 
 
 async def _run_git(args: list[str], cwd: Path, timeout: float) -> None:

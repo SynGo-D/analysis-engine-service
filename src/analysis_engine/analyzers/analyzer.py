@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 
-from ..domain import Finding, FindingCategory
+from ..domain import AnalysisJob, Finding, FindingCategory
 from ..workspace import Workspace
 
 
@@ -50,10 +50,18 @@ class Analyzer(ABC):
         """
 
     @abstractmethod
-    async def analyze(self, workspace: Workspace) -> list[Finding]:
+    async def analyze(self, workspace: Workspace, job: AnalysisJob) -> list[Finding]:
         """
         Runs build_command()'s tool, pipes its output through Reviewdog
         (using reviewdog_format), and normalizes Reviewdog's aggregated
         diagnostics into Finding objects. Implemented per-tool in Phase 6
         — different tools need different Reviewdog invocation shapes.
+
+        `job` is required, not optional: every Finding produced here must
+        carry repository/pull_request_number/commit_sha (Phase 2's
+        domain model), and Workspace (Phase 4) only carries `job_id` — it
+        has no reason to duplicate the rest of AnalysisJob's fields just
+        for this. Caught by attempting the real implementation in Phase 6,
+        the same class of correction as webhook-listener's deliveryId
+        parameter fix.
         """
