@@ -11,7 +11,9 @@ FindingCategory = Literal[
     "code_smell",
     "style",
     "complexity",
+    "cognitive_complexity",
     "maintainability",
+    "unused_code",
 ]
 
 

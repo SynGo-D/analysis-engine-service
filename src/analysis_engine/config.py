@@ -1,4 +1,3 @@
-import sys
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -46,30 +45,22 @@ class Settings(BaseSettings):
     # indefinitely.
     git_clone_timeout_seconds: float = 60.0
 
-    # Per-tool-invocation timeout for analyzer subprocesses (linters,
-    # reviewdog). Analyzing untrusted code should never hang a worker.
+    # Per-tool-invocation timeout for the ESLint subprocess. Analyzing
+    # untrusted code should never hang a worker.
     analyzer_timeout_seconds: float = 120.0
 
-    # Analyzer tool locations — resolved to absolute paths against this
-    # service's project root at class-definition time. This matters:
-    # analyzer subprocesses run with cwd set to the *analyzed workspace*
-    # (a temp directory elsewhere), not this project's root, so a plain
+    # ESLint's location — resolved to an absolute path against this
+    # service's project root at class-definition time. This matters: the
+    # ESLint subprocess runs with cwd set to the *analyzed workspace* (a
+    # temp directory elsewhere), not this project's root, so a plain
     # relative default would resolve against the wrong directory (caught
     # by actually running this against a real workspace — a bare
     # "tools/eslint/node_modules/.bin/eslint" string produced
     # FileNotFoundError once cwd was the workspace, not this project).
     # Still overridable via env vars for production/container deployments
-    # where these tools live at standard absolute paths instead (e.g. a
-    # globally-installed cppcheck).
+    # where it lives at a standard absolute path instead.
     eslint_bin_path: str = str(_PROJECT_ROOT / "tools/eslint/node_modules/.bin/eslint")
     eslint_config_path: str = str(_PROJECT_ROOT / "tools/eslint/eslint.config.cjs")
-    reviewdog_bin_path: str = str(_PROJECT_ROOT / ".tools-bin/reviewdog")
-    # Installed via the "cppcheck" PyPI package (pyproject.toml) — a
-    # manylinux wheel bundling the real compiled binary, verified
-    # end-to-end, not just installed and assumed to work. Resolved next to
-    # sys.executable (this venv's own bin/ dir) rather than relying on
-    # PATH/activation order, same reasoning as the other tool paths above.
-    cppcheck_bin_path: str = str(Path(sys.executable).parent / "cppcheck")
 
 
 settings = Settings()

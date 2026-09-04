@@ -1,22 +1,20 @@
-from ..analyzers import Analyzer, EslintAnalyzer, PylintAnalyzer, RadonAnalyzer, CppcheckAnalyzer
+from ..analyzers import Analyzer, EslintAnalyzer
 
-# Adding a new tool/language means implementing the Analyzer interface
-# once and adding it here — nothing else in this file, or the
-# orchestrator, needs to change.
+# Single-tool by design: this service is a dedicated ESLint (JS/TS)
+# analyzer. Adding a future tool/language back means implementing the
+# Analyzer interface once and adding it here — nothing else in this file,
+# or the orchestrator, needs to change.
 _ALL_ANALYZERS: tuple[type[Analyzer], ...] = (
     EslintAnalyzer,
-    PylintAnalyzer,
-    RadonAnalyzer,
-    CppcheckAnalyzer,
 )
 
 
 class AnalyzerFactory:
     """
     Selects the analyzer(s) applicable to a set of detected languages
-    (Factory Pattern). Multiple analyzers can apply to the same language
-    — Pylint and Radon both target Python — so this returns every
-    applicable analyzer, not just one; the orchestrator runs all of them.
+    (Factory Pattern). Still returns a list (not a single instance) so a
+    future second JS/TS-capable tool can be added without changing this
+    method's contract.
     """
 
     def create_for_languages(self, languages: frozenset[str]) -> list[Analyzer]:
