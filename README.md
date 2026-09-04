@@ -1,14 +1,17 @@
 # Analysis Engine
 
-Analysis microservice for the CodePulse automated code-review and
-technical-debt platform. Consumes normalized PR/MR analysis jobs from
-RabbitMQ, runs static-analysis tools through Reviewdog, normalizes and
-persists findings, and publishes completion events.
+A dedicated ESLint (JavaScript/TypeScript) code-quality analyzer
+microservice for the CodePulse automated code-review and technical-debt
+platform. Consumes normalized PR/MR analysis jobs from RabbitMQ, runs a
+fixed ESLint ruleset against the checked-out code, computes quality
+metrics (complexity, cognitive complexity, code size, unused code, issue
+density, per-rule and per-file statistics), and persists normalized
+findings + metrics for `main-backend`/`web-interface` to read over HTTP.
 
-**Reviewdog is the review/diagnostic aggregation and reporting layer; this
-service owns orchestration and result processing.** This keeps the
-architecture from becoming tightly coupled to Reviewdog and makes it
-possible to replace or add analysis tools later.
+```text
+Backend  = analysis + calculation + persistence   (this service, main-backend)
+Frontend = presentation + interaction             (web-interface)
+```
 
 > **Interop note:** this service consumes from `pr_queue` — the same
 > queue `webhook-listener` publishes `PRJob`-shaped messages to (see that
@@ -35,48 +38,40 @@ possible to replace or add analysis tools later.
      Language       Analyzer      Workspace
      Detection      Factory       Manager
                        │
-             ┌─────────┼─────────┐
-             ▼         ▼         ▼
-           ESLint    Pylint    Cppcheck
-             │         │         │
-             └─────────┼─────────┘
                        ▼
-                   Reviewdog
+                    ESLint
                        │
                        ▼
               Finding Normalizer
                        │
                        ▼
-             Quality/Debt Results
+              Metrics Calculator
                        │
           ┌────────────┴────────────┐
           ▼                         ▼
-      PostgreSQL                 MongoDB
-          │
-          ▼
-     RabbitMQ
-          │
-          ▼
-   analysis.completed
+      PostgreSQL                 RabbitMQ
+   (findings + metrics)             │
+                                    ▼
+                          analysis.completed
 ```
 
 ### Layers
 
 | Layer | Responsibility |
 |---|---|
-| `api/` | FastAPI health/readiness routes (jobs arrive via RabbitMQ, not HTTP) |
+| `api/` | FastAPI health/readiness + read routes (jobs arrive via RabbitMQ, not HTTP) |
 | `consumers/` | Entry point for analysis jobs — the RabbitMQ equivalent of a controller |
 | `application/` | Orchestrates the full pipeline (Pipeline/Command Pattern) |
-| `domain/` | Internal models: `AnalysisJob`, `Finding`, `AnalysisResult` |
-| `analyzers/` | Tool adapters (ESLint, Pylint, Radon, Cppcheck) — Adapter Pattern |
-| `factories/` | Selects the right analyzer(s) for detected languages — Factory Pattern |
+| `domain/` | Internal models: `AnalysisJob`, `Finding`, `AnalysisResult`, `AnalysisMetrics` |
+| `analyzers/` | ESLint adapter (Adapter Pattern) — parses ESLint's own `--format json` output directly |
+| `factories/` | Selects the ESLint analyzer when JS/TS is detected — Factory Pattern |
+| `metrics/` | Computes `AnalysisMetrics`/`RuleStatistic`/`FileStatistic` from findings + a workspace file scan |
 | `workspace/` | Isolated per-job temp workspace, secure clone/checkout, cleanup |
-| `repositories/` | Postgres (and Mongo, if justified) persistence — Repository Pattern |
+| `repositories/` | Postgres persistence — Repository Pattern |
 | `messaging/` | Publishes `analysis.completed`/`analysis.failed` |
 | `infrastructure/`, `config.py` | Cross-cutting infrastructure (DB/RabbitMQ connections, settings) |
 
-Each layer's `README.md` describes its responsibility and which phase adds
-real code to it.
+Each layer's `README.md` describes its responsibility in more detail.
 
 ## Local development
 
@@ -89,7 +84,6 @@ start that one first.
 docker compose up -d
 
 # 2. Create and activate a virtualenv, install Python dependencies
-#    (includes Pylint, Radon, and Cppcheck — see tools/README.md)
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
@@ -98,15 +92,11 @@ pip install -e ".[dev]"
 #    repository's own eslint/devDependencies — see analyzers/README.md)
 cd tools/eslint && npm install && cd ../..
 
-# 4. Install Reviewdog (prebuilt binary, no Go toolchain needed)
-curl -sfL https://raw.githubusercontent.com/reviewdog/reviewdog/master/install.sh \
-  | sh -s -- -b .tools-bin
-
-# 5. Copy env config (already matches docker-compose.yml's ports/credentials,
+# 4. Copy env config (already matches docker-compose.yml's ports/credentials,
 #    and assumes webhook-listener's shared RabbitMQ is already running)
 cp .env.example .env
 
-# 6. Start the service
+# 5. Start the service
 uvicorn analysis_engine.main:app --reload --app-dir src --port 8000
 ```
 
@@ -115,19 +105,26 @@ curl http://localhost:8000/health   # liveness — process is up
 curl http://localhost:8000/ready    # readiness — DB + RabbitMQ reachable
 ```
 
-## Build roadmap
+Read API, consumed by `main-backend`'s gateway (and, from there,
+`web-interface`'s dashboard):
 
-Built incrementally, one phase at a time:
+```bash
+curl http://localhost:8000/api/repositories/{owner}/{repo}/analysis
+curl http://localhost:8000/api/repositories/{owner}/{repo}/analysis/pull-requests/{number}
+```
 
-1. ✅ Project structure + infrastructure
-2. ✅ Domain models (`AnalysisJob`, `Finding`, `AnalysisResult`)
-3. ✅ RabbitMQ consumer (`pr_queue`, correlation IDs, job validation)
-4. ✅ Workspace manager (isolated temp workspace, secure clone/checkout)
-5. ✅ Language detection + analyzer abstraction (Strategy) + Factory Pattern
-6. ✅ Analyzer adapters (ESLint, Pylint, Radon, Cppcheck) + Reviewdog integration
-7. ✅ Finding normalization + fingerprint/deduplication
-8. Quality/technical-debt metrics calculation (SQALE-oriented)
-9. Persistence (Postgres, Mongo if justified)
-10. Publish completion/failure events + idempotent job tracking + retry/DLQ
-11. Testing (unit, integration, security, e2e)
-12. Docker/Kubernetes/AWS deployment configuration
+## Metrics
+
+`AnalysisMetrics` (files analyzed, LOC, error/warning/issue counts and
+densities, cyclomatic complexity, cognitive complexity, code size, unused
+code) plus per-rule and per-file statistics are computed once, in
+`metrics/calculator.py`, and stored on every `AnalysisResult`. No
+consumer of this service's API recomputes them — see `metrics/README.md`
+for exactly how each figure is derived from ESLint's rule-violation
+output.
+
+## Tests
+
+```bash
+pytest
+```

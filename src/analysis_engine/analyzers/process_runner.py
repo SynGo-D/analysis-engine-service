@@ -24,11 +24,9 @@ async def run_process(
     injection-safety principle as workspace/git_client.py.
 
     Deliberately does not decide success/failure by return code itself:
-    tools vary in what a nonzero exit means (confirmed by testing —
-    pylint exits with a bitmask reflecting issue severities found,
-    ESLint exits 1 when it finds any lint problems; neither of those is
-    "the tool crashed"). That decision belongs to each analyzer, which
-    knows its own tool's exit-code conventions, not to this shared runner.
+    ESLint exits 1 when it finds any lint problems, which isn't "the tool
+    crashed". That decision belongs to the analyzer, which knows its own
+    tool's exit-code conventions, not to this shared runner.
     """
     process = await asyncio.create_subprocess_exec(
         *args,

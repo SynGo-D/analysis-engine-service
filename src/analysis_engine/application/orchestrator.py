@@ -6,6 +6,7 @@ from .finding_normalizer import FindingNormalizer
 from ..analyzers import Analyzer
 from ..domain import AnalysisJob, AnalysisResult, Finding
 from ..factories import AnalyzerFactory, detect_languages
+from ..metrics import calculate_file_statistics, calculate_metrics, calculate_rule_statistics, scan_js_ts_files
 from ..workspace import WorkspaceManager
 
 logger = logging.getLogger(__name__)
@@ -17,16 +18,12 @@ class AnalysisOrchestrator:
 
         validate job -> obtain repository -> create workspace
           -> checkout commit -> detect languages -> select analyzers
-          -> execute via Reviewdog -> normalize findings
-          -> calculate quality/technical-debt metrics -> persist results
-          -> publish completion event
+          -> run ESLint -> normalize findings -> calculate metrics
+          -> return result (persistence/publish happen in the caller)
 
     This is the only place that sequence is encoded (Pipeline/Command
     Pattern) — the consumer just calls `run()` and turns the outcome into
-    an ack/nack. `technical_debt` calculation (Phase 8), persistence
-    (Phase 9), and publishing the completion event (Phase 10) are still
-    outstanding — this phase wires everything up through normalization,
-    the first point the pipeline can be exercised end-to-end as one flow.
+    an ack/nack.
     """
 
     def __init__(
@@ -59,6 +56,11 @@ class AnalysisOrchestrator:
                 return_exceptions=True,
             )
 
+            # Must happen before the workspace context exits — the temp
+            # checkout is deleted as soon as it does, and AnalysisMetrics
+            # needs each file's line count independent of ESLint's output.
+            file_lines = scan_js_ts_files(workspace.path)
+
         raw_findings, failed_tools = self._collect_results(analyzers, results, job)
 
         # If every selected analyzer failed, the job itself failed — a
@@ -76,12 +78,15 @@ class AnalysisOrchestrator:
             repository=job.repository,
             pull_request_number=job.pull_request_number,
             commit_sha=job.commit_sha,
+            branch=job.branch,
             status="failed" if all_failed else "completed",
             findings=findings,
+            metrics=calculate_metrics(findings, file_lines),
+            rule_statistics=calculate_rule_statistics(findings),
+            file_statistics=calculate_file_statistics(findings, file_lines),
             started_at=started_at,
             completed_at=datetime.now(timezone.utc),
             error_message="; ".join(failed_tools) if all_failed else None,
-            # technical_debt left at its default (all-zero) — Phase 8.
         )
 
     def _collect_results(

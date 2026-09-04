@@ -9,12 +9,10 @@ class Analyzer(ABC):
     Strategy Pattern: one implementation per static-analysis tool. The
     factory and orchestrator depend only on this interface — never on a
     specific tool's command line, output format, or normalization logic.
-
-    Reviewdog sits between build_command()'s tool invocation and
-    analyze()'s return value: analyzers are responsible for feeding their
-    tool's raw output to Reviewdog and turning Reviewdog's aggregated
-    diagnostics into Finding objects, not for reimplementing result
-    aggregation themselves.
+    Currently implemented once, by `EslintAnalyzer`; kept as an interface
+    (rather than inlining ESLint-specific calls into the orchestrator) so
+    a second JS/TS-capable tool could be added later without touching
+    `application/orchestrator.py`.
     """
 
     @property
@@ -30,12 +28,7 @@ class Analyzer(ABC):
     @property
     @abstractmethod
     def supported_categories(self) -> frozenset[FindingCategory]:
-        """The kinds of findings this tool can realistically produce (e.g. Radon: complexity/maintainability, not bugs)."""
-
-    @property
-    @abstractmethod
-    def reviewdog_format(self) -> str:
-        """The reviewdog -f/-name value describing this tool's raw output format."""
+        """The kinds of findings this tool can realistically produce."""
 
     def supports(self, language: str) -> bool:
         return language in self.supported_languages
@@ -52,16 +45,11 @@ class Analyzer(ABC):
     @abstractmethod
     async def analyze(self, workspace: Workspace, job: AnalysisJob) -> list[Finding]:
         """
-        Runs build_command()'s tool, pipes its output through Reviewdog
-        (using reviewdog_format), and normalizes Reviewdog's aggregated
-        diagnostics into Finding objects. Implemented per-tool in Phase 6
-        — different tools need different Reviewdog invocation shapes.
+        Runs build_command()'s tool and normalizes its own output into
+        Finding objects.
 
         `job` is required, not optional: every Finding produced here must
-        carry repository/pull_request_number/commit_sha (Phase 2's
-        domain model), and Workspace (Phase 4) only carries `job_id` — it
-        has no reason to duplicate the rest of AnalysisJob's fields just
-        for this. Caught by attempting the real implementation in Phase 6,
-        the same class of correction as webhook-listener's deliveryId
-        parameter fix.
+        carry repository/pull_request_number/commit_sha, and Workspace
+        only carries `job_id` — it has no reason to duplicate the rest of
+        AnalysisJob's fields just for this.
         """

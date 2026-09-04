@@ -1,24 +1,20 @@
 from pathlib import Path
 
 # Deliberately simple — file-extension matching, not a content-based
-# classifier (e.g. linguist-style byte analysis). Matches "do not
-# over-engineer": this correctly identifies the languages the initial
-# tool set (ESLint, Pylint, Radon, Cppcheck) cares about, and a
-# wrong/missing extension just means that one file isn't analyzed, not a
-# correctness or security problem for the pipeline.
+# classifier (e.g. linguist-style byte analysis). This service only
+# analyzes JavaScript/TypeScript, so this map exists to answer one
+# question: "does this workspace contain any JS/TS at all" (a PR touching
+# only, say, a README shouldn't schedule an ESLint run).
 _EXTENSION_LANGUAGE_MAP: dict[str, str] = {
     ".js": "javascript", ".jsx": "javascript", ".mjs": "javascript", ".cjs": "javascript",
     ".ts": "typescript", ".tsx": "typescript",
-    ".py": "python",
-    ".c": "c", ".h": "c",
-    ".cpp": "cpp", ".cc": "cpp", ".cxx": "cpp", ".hpp": "cpp", ".hh": "cpp", ".hxx": "cpp",
 }
 
 # Vendored/generated directories skipped during detection — without this,
-# a committed node_modules or venv would cause analyzers to run against
+# a committed node_modules or dist would cause the analyzer to run against
 # code the repository owner doesn't actually own/write.
 _IGNORED_DIR_NAMES = {
-    ".git", "node_modules", "__pycache__", ".venv", "venv", "dist", "build", ".mypy_cache",
+    ".git", "node_modules", "dist", "build", "coverage",
 }
 
 

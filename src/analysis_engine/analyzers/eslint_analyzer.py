@@ -1,5 +1,5 @@
 import json
-import re
+from pathlib import Path
 
 from .analyzer import Analyzer
 from .process_runner import ToolExecutionError, run_process
@@ -7,12 +7,32 @@ from ..config import settings
 from ..domain import AnalysisJob, Finding, FindingCategory
 from ..workspace import Workspace
 
-# rdjsonl's "message" field for the eslint format keeps the rule ID
-# embedded in the text (reviewdog's eslint parser expects ESLint's
-# "stylish" output, which right-aligns the rule ID after 2+ spaces —
-# confirmed by piping real eslint output through reviewdog directly).
-# There's no separate structured field for it, so it's extracted here.
-_RULE_ID_PATTERN = re.compile(r"^(.*\S)\s{2,}(\S+)$")
+# Rules whose category is well understood ahead of time. Everything else
+# falls back to _DEFAULT_CATEGORY — eslint:recommended and
+# typescript-eslint/recommended cover well over a hundred rules between
+# them, and hand-mapping every one is its own substantial task; this list
+# covers the rules AnalysisMetrics is actually derived from (so their
+# category is load-bearing, not cosmetic) plus the handful of clearly
+# bug-shaped built-ins worth calling out explicitly.
+_RULE_CATEGORY_MAP: dict[str, FindingCategory] = {
+    "complexity": "complexity",
+    "sonarjs/cognitive-complexity": "cognitive_complexity",
+    "max-lines": "maintainability",
+    "max-lines-per-function": "maintainability",
+    "no-unused-vars": "unused_code",
+    "@typescript-eslint/no-unused-vars": "unused_code",
+    "no-unreachable": "unused_code",
+    "no-undef": "bug",
+    "no-dupe-args": "bug",
+    "no-dupe-keys": "bug",
+    "no-duplicate-case": "bug",
+    "no-const-assign": "bug",
+    "no-invalid-regexp": "bug",
+    "no-obj-calls": "bug",
+    "use-isnan": "bug",
+    "valid-typeof": "bug",
+}
+_DEFAULT_CATEGORY: FindingCategory = "code_smell"
 
 
 class EslintAnalyzer(Analyzer):
@@ -24,11 +44,9 @@ class EslintAnalyzer(Analyzer):
     scripts can execute arbitrary code) would undermine "never execute
     untrusted repository code directly on the host."
 
-    This is the one analyzer that genuinely routes through Reviewdog's
-    own format parsing — confirmed via `reviewdog -list`, ESLint is the
-    only one of the four initial tools with a real built-in Reviewdog
-    parser (Pylint/Radon/Cppcheck do not, despite Phase 5's placeholder
-    assumption otherwise for two of them).
+    Parses ESLint's own `--format json` output directly — no external
+    aggregation layer sits between ESLint and Finding construction, so
+    the category/severity/location fields ESLint reports are used as-is.
     """
 
     @property
@@ -41,17 +59,14 @@ class EslintAnalyzer(Analyzer):
 
     @property
     def supported_categories(self) -> frozenset[FindingCategory]:
-        return frozenset({"bug", "code_smell", "style"})
-
-    @property
-    def reviewdog_format(self) -> str:
-        return "eslint"
+        return frozenset(_RULE_CATEGORY_MAP.values()) | {_DEFAULT_CATEGORY}
 
     def build_command(self, workspace: Workspace) -> list[str]:
         return [
             settings.eslint_bin_path,
             "--config", settings.eslint_config_path,
             "--no-config-lookup",
+            "--format", "json",
             ".",
         ]
 
@@ -72,59 +87,46 @@ class EslintAnalyzer(Analyzer):
         if not eslint_result.stdout.strip():
             return []
 
-        reviewdog_result = await run_process(
-            [
-                settings.reviewdog_bin_path,
-                f"-f={self.reviewdog_format}",
-                "-reporter=rdjsonl",
-                "-filter-mode=nofilter",  # report everything, not just PR-diff-added lines — see analyzers/README.md
-                "-level=info",
-            ],
-            cwd=workspace.path,
-            timeout=settings.analyzer_timeout_seconds,
-            stdin_data=eslint_result.stdout,
-        )
+        file_reports = json.loads(eslint_result.stdout)
 
         findings: list[Finding] = []
-        for line in reviewdog_result.stdout.splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            diagnostic = json.loads(line)
-            findings.append(self._to_finding(diagnostic, job))
+        for file_report in file_reports:
+            file_path = self._relative_path(file_report["filePath"], workspace)
+            for message in file_report.get("messages", []):
+                findings.append(self._to_finding(message, file_path, job))
 
         return findings
 
-    def _to_finding(self, diagnostic: dict, job: AnalysisJob) -> Finding:
-        raw_message = diagnostic["message"]
-        match = _RULE_ID_PATTERN.match(raw_message)
-        message, rule_id = (match.group(1), match.group(2)) if match else (raw_message, "eslint")
+    def _relative_path(self, absolute_path: str, workspace: Workspace) -> str:
+        """
+        ESLint's JSON formatter always reports absolute file paths;
+        everything downstream (Finding.file_path, metrics/file_scanner.py's
+        LOC map, main-backend, web-interface) works with paths relative to
+        the repository root, so the join key matches on both sides.
+        """
+        try:
+            return Path(absolute_path).relative_to(workspace.path).as_posix()
+        except ValueError:
+            return absolute_path
 
-        location = diagnostic["location"]
-        start = location["range"]["start"]
+    def _to_finding(self, message: dict, file_path: str, job: AnalysisJob) -> Finding:
+        # A fatal parse error (unparsable syntax) has ruleId: null —
+        # still a real finding, just not tied to a specific rule.
+        rule_id = message.get("ruleId") or "parse-error"
 
         return Finding(
             repository=job.repository,
             pull_request_number=job.pull_request_number,
             commit_sha=job.commit_sha,
-            file_path=location["path"],
-            line=start.get("line"),
-            column=start.get("column"),
-            severity="error" if diagnostic.get("severity") == "ERROR" else "warning",
-            # Placeholder, not a considered mapping: Reviewdog's rdjsonl
-            # output for eslint doesn't carry a category, and mapping real
-            # rule IDs (no-unused-vars -> code_smell, no-undef -> bug,
-            # etc.) to FindingCategory deserves more thought than a rushed
-            # inline decision while also standing up three other tools'
-            # integrations — genuinely Phase 7's job, not skipped here.
-            category="bug",
+            file_path=file_path,
+            line=message.get("line"),
+            column=message.get("column"),
+            severity="error" if message.get("severity") == 2 else "warning",
+            category=_RULE_CATEGORY_MAP.get(rule_id, _DEFAULT_CATEGORY),
             rule_id=rule_id,
-            message=message,
+            message=message["message"],
             tool=self.tool_name,
-            # Placeholder, not computed: what should and shouldn't be part
-            # of a stable fingerprint (e.g. should line number count, given
-            # code shifting up/down shouldn't register as a "new" issue?)
-            # is a real design question Phase 7 owns — an empty string
-            # here is an honest "not yet", not a rushed guess.
+            # Computed by FindingNormalizer, not here — see its docstring
+            # for exactly what does and doesn't go into the hash.
             fingerprint="",
         )

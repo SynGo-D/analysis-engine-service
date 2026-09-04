@@ -1,6 +1,8 @@
+import json
+
 import asyncpg
 
-from ..domain import AnalysisResult, Finding
+from ..domain import AnalysisMetrics, AnalysisResult, Finding, FileStatistic, RuleStatistic
 
 
 class AnalysisResultRepository:
@@ -25,9 +27,10 @@ class AnalysisResultRepository:
                     """
                     INSERT INTO analysis_results (
                         result_id, job_id, repository, pull_request_number,
-                        commit_sha, status, error_message, started_at, completed_at
+                        commit_sha, branch, status, error_message, metrics,
+                        rule_statistics, file_statistics, started_at, completed_at
                     )
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
                     ON CONFLICT (result_id) DO NOTHING;
                     """,
                     result.result_id,
@@ -35,8 +38,12 @@ class AnalysisResultRepository:
                     result.repository,
                     result.pull_request_number,
                     result.commit_sha,
+                    result.branch,
                     result.status,
                     result.error_message,
+                    result.metrics.model_dump_json(),
+                    json.dumps([s.model_dump() for s in result.rule_statistics]),
+                    json.dumps([s.model_dump() for s in result.file_statistics]),
                     result.started_at,
                     result.completed_at,
                 )
@@ -142,8 +149,15 @@ class AnalysisResultRepository:
             repository=row["repository"],
             pull_request_number=row["pull_request_number"],
             commit_sha=row["commit_sha"],
+            branch=row["branch"],
             status=row["status"],
             findings=findings,
+            # asyncpg returns JSONB columns as raw JSON text (no codec
+            # registered), so these are parsed back into their Pydantic
+            # models here rather than left as bare dicts/lists.
+            metrics=AnalysisMetrics.model_validate_json(row["metrics"]),
+            rule_statistics=[RuleStatistic.model_validate(s) for s in json.loads(row["rule_statistics"])],
+            file_statistics=[FileStatistic.model_validate(s) for s in json.loads(row["file_statistics"])],
             started_at=row["started_at"],
             completed_at=row["completed_at"],
             error_message=row["error_message"],
