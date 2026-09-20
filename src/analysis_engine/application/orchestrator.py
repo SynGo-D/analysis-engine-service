@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 from .finding_normalizer import FindingNormalizer
 from ..analyzers import Analyzer
-from ..domain import AnalysisJob, AnalysisResult, Finding
+from ..domain import AnalysisJob, AnalysisResult, Finding, PythonAnalysisResult
 from ..factories import AnalyzerFactory, detect_languages
 from ..metrics import calculate_file_statistics, calculate_metrics, calculate_rule_statistics, scan_js_ts_files
 from ..workspace import WorkspaceManager
@@ -18,12 +18,16 @@ class AnalysisOrchestrator:
 
         validate job -> obtain repository -> create workspace
           -> checkout commit -> detect languages -> select analyzers
-          -> run ESLint -> normalize findings -> calculate metrics
-          -> return result (persistence/publish happen in the caller)
+          -> run ESLint/Python analyzers -> normalize findings
+          -> calculate metrics -> return result (persistence/publish
+          happen in the caller)
 
     This is the only place that sequence is encoded (Pipeline/Command
     Pattern) — the consumer just calls `run()` and turns the outcome into
-    an ack/nack.
+    an ack/nack. A polyglot repository runs every applicable analyzer
+    concurrently (ESLint for JS/TS, PythonAnalyzer for Python) exactly
+    the same way multiple JS/TS analyzers would have — this loop doesn't
+    special-case language.
     """
 
     def __init__(
@@ -84,6 +88,7 @@ class AnalysisOrchestrator:
             metrics=calculate_metrics(findings, file_lines),
             rule_statistics=calculate_rule_statistics(findings),
             file_statistics=calculate_file_statistics(findings, file_lines),
+            python=self._extract_python_result(analyzers),
             started_at=started_at,
             completed_at=datetime.now(timezone.utc),
             error_message="; ".join(failed_tools) if all_failed else None,
@@ -106,3 +111,18 @@ class AnalysisOrchestrator:
             raw_findings.extend(result)
 
         return raw_findings, failed_tools
+
+    def _extract_python_result(self, analyzers: list[Analyzer]) -> PythonAnalysisResult | None:
+        """
+        Duck-typed rather than an isinstance check against a concrete
+        PythonAnalyzer import — any future analyzer wanting to attach its
+        own richer detail to AnalysisResult can expose the same
+        `last_result` attribute without this orchestrator needing to know
+        its concrete type. `None` if no analyzer exposed one (e.g. a
+        pure-JS/TS job never ran PythonAnalyzer at all).
+        """
+        for analyzer in analyzers:
+            result = getattr(analyzer, "last_result", None)
+            if isinstance(result, PythonAnalysisResult):
+                return result
+        return None

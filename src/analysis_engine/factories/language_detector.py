@@ -1,20 +1,25 @@
 from pathlib import Path
 
 # Deliberately simple — file-extension matching, not a content-based
-# classifier (e.g. linguist-style byte analysis). This service only
-# analyzes JavaScript/TypeScript, so this map exists to answer one
-# question: "does this workspace contain any JS/TS at all" (a PR touching
-# only, say, a README shouldn't schedule an ESLint run).
+# classifier (e.g. linguist-style byte analysis). This map exists to
+# answer one question per language: "does this workspace contain any of
+# it at all" (a PR touching only, say, a README shouldn't schedule an
+# ESLint or Python run).
 _EXTENSION_LANGUAGE_MAP: dict[str, str] = {
     ".js": "javascript", ".jsx": "javascript", ".mjs": "javascript", ".cjs": "javascript",
     ".ts": "typescript", ".tsx": "typescript",
+    ".py": "python",
 }
 
 # Vendored/generated directories skipped during detection — without this,
-# a committed node_modules or dist would cause the analyzer to run against
-# code the repository owner doesn't actually own/write.
+# a committed node_modules, dist, or virtualenv would cause an analyzer to
+# run against code the repository owner doesn't actually own/write.
+# analyzers/python/python_analyzer.py's own discover_python_files() uses
+# the same set for the same reason, at the file-discovery layer rather
+# than this detection layer — kept in sync by hand.
 _IGNORED_DIR_NAMES = {
     ".git", "node_modules", "dist", "build", "coverage",
+    ".venv", "venv", "env", "__pycache__",
 }
 
 
