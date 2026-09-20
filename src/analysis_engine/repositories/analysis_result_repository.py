@@ -2,7 +2,7 @@ import json
 
 import asyncpg
 
-from ..domain import AnalysisMetrics, AnalysisResult, Finding, FileStatistic, RuleStatistic
+from ..domain import AnalysisMetrics, AnalysisResult, Finding, FileStatistic, PythonAnalysisResult, RuleStatistic
 
 
 class AnalysisResultRepository:
@@ -28,9 +28,10 @@ class AnalysisResultRepository:
                     INSERT INTO analysis_results (
                         result_id, job_id, repository, pull_request_number,
                         commit_sha, branch, status, error_message, metrics,
-                        rule_statistics, file_statistics, started_at, completed_at
+                        rule_statistics, file_statistics, python_result,
+                        started_at, completed_at
                     )
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
                     ON CONFLICT (result_id) DO NOTHING;
                     """,
                     result.result_id,
@@ -44,6 +45,7 @@ class AnalysisResultRepository:
                     result.metrics.model_dump_json(),
                     json.dumps([s.model_dump() for s in result.rule_statistics]),
                     json.dumps([s.model_dump() for s in result.file_statistics]),
+                    result.python.model_dump_json() if result.python else None,
                     result.started_at,
                     result.completed_at,
                 )
@@ -53,10 +55,11 @@ class AnalysisResultRepository:
                         """
                         INSERT INTO findings (
                             finding_id, result_id, repository, pull_request_number,
-                            commit_sha, file_path, line, col, severity, category,
-                            rule_id, message, tool, fingerprint, remediation_minutes
+                            commit_sha, file_path, line, col, end_line, end_col,
+                            severity, category, rule_id, message, tool,
+                            fingerprint, remediation_minutes, metadata
                         )
-                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15);
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18);
                         """,
                         [
                             (
@@ -68,6 +71,8 @@ class AnalysisResultRepository:
                                 finding.file_path,
                                 finding.line,
                                 finding.column,
+                                finding.end_line,
+                                finding.end_column,
                                 finding.severity,
                                 finding.category,
                                 finding.rule_id,
@@ -75,6 +80,7 @@ class AnalysisResultRepository:
                                 finding.tool,
                                 finding.fingerprint,
                                 finding.remediation_minutes,
+                                json.dumps(finding.metadata),
                             )
                             for finding in result.findings
                         ],
@@ -158,6 +164,7 @@ class AnalysisResultRepository:
             metrics=AnalysisMetrics.model_validate_json(row["metrics"]),
             rule_statistics=[RuleStatistic.model_validate(s) for s in json.loads(row["rule_statistics"])],
             file_statistics=[FileStatistic.model_validate(s) for s in json.loads(row["file_statistics"])],
+            python=PythonAnalysisResult.model_validate_json(row["python_result"]) if row["python_result"] else None,
             started_at=row["started_at"],
             completed_at=row["completed_at"],
             error_message=row["error_message"],
@@ -172,6 +179,8 @@ class AnalysisResultRepository:
             file_path=row["file_path"],
             line=row["line"],
             column=row["col"],
+            end_line=row["end_line"],
+            end_column=row["end_col"],
             severity=row["severity"],
             category=row["category"],
             rule_id=row["rule_id"],
@@ -179,4 +188,5 @@ class AnalysisResultRepository:
             tool=row["tool"],
             fingerprint=row["fingerprint"],
             remediation_minutes=row["remediation_minutes"],
+            metadata=json.loads(row["metadata"]) if row["metadata"] else {},
         )

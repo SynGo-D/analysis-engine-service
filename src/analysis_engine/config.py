@@ -1,3 +1,4 @@
+import sys
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -61,6 +62,23 @@ class Settings(BaseSettings):
     # where it lives at a standard absolute path instead.
     eslint_bin_path: str = str(_PROJECT_ROOT / "tools/eslint/node_modules/.bin/eslint")
     eslint_config_path: str = str(_PROJECT_ROOT / "tools/eslint/eslint.config.cjs")
+
+    # Per-tool-invocation timeout for the Python analyzers (Pylint, each
+    # of Radon's four subcommands, Bandit) — separate from
+    # analyzer_timeout_seconds since Python analysis runs three tools
+    # concurrently per job rather than ESLint's one, and Radon alone
+    # issues four subprocess calls; kept as its own setting so it can be
+    # tuned independently without changing ESLint's behavior.
+    python_analyzer_timeout_seconds: float = 120.0
+
+    # Pylint/Radon/Bandit are installed as regular Python dependencies
+    # (pyproject.toml), unlike ESLint — so, like cppcheck previously, their
+    # console-script entry points live next to this venv's own
+    # sys.executable rather than under tools/. Still overridable via env
+    # vars for container deployments where they're on PATH instead.
+    pylint_bin_path: str = str(Path(sys.executable).parent / "pylint")
+    radon_bin_path: str = str(Path(sys.executable).parent / "radon")
+    bandit_bin_path: str = str(Path(sys.executable).parent / "bandit")
 
 
 settings = Settings()

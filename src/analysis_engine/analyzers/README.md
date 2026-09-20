@@ -1,9 +1,11 @@
 # analyzers
 
-Tool adapters (Adapter Pattern via the `Analyzer` Strategy interface).
-This service runs a single tool — ESLint — by design: it's a dedicated
-JavaScript/TypeScript code-quality analyzer, not a generic multi-language
-aggregator.
+Tool adapters (Adapter Pattern via the `Analyzer` Strategy interface), one
+per language: `EslintAnalyzer` (JavaScript/TypeScript) and `PythonAnalyzer`
+(Python — itself a composite over Pylint/Radon/Bandit, see `python/README.md`).
+Both are selected the same way, through `factories/analyzer_factory.py`,
+and run concurrently in a polyglot repository exactly like two JS/TS
+analyzers would.
 
 - `Analyzer` (ABC) — `analyze(workspace, job)` (takes `job`, not just
   `workspace`, because every `Finding` needs repository/PR/commit context
@@ -18,6 +20,11 @@ aggregator.
   `no-undef`. Parses ESLint's own `--format json` output directly — no
   external diagnostic-aggregation layer sits between ESLint and `Finding`
   construction.
+- **`python/`** — Pylint (code quality) + Radon (complexity/
+  maintainability/Halstead/LOC) + Bandit (security), each independently
+  status-tracked (see `domain/analyzer_status.py`) and run concurrently.
+  Fully self-contained — see `python/README.md` for its own architecture,
+  exit-code semantics, and removal notes.
 
 Two non-obvious things worth knowing:
 - **ESLint's nonzero exit code means "issues found," not "tool

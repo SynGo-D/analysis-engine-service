@@ -28,6 +28,11 @@ CREATE TABLE IF NOT EXISTS analysis_results (
     rule_statistics       JSONB NOT NULL DEFAULT '[]'::jsonb,
     file_statistics       JSONB NOT NULL DEFAULT '[]'::jsonb,
 
+    -- PythonAnalysisResult (see domain/python_metrics.py) — NULL, not an
+    -- empty object, when the workspace had no Python at all (distinct
+    -- from "Python was analyzed and every tool failed").
+    python_result         JSONB,
+
     started_at            TIMESTAMPTZ NOT NULL,
     completed_at          TIMESTAMPTZ,
     created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -37,6 +42,7 @@ ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS branch TEXT NOT NULL DEFAU
 ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS metrics JSONB NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS rule_statistics JSONB NOT NULL DEFAULT '[]'::jsonb;
 ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS file_statistics JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS python_result JSONB;
 
 CREATE INDEX IF NOT EXISTS idx_analysis_results_repo
     ON analysis_results (repository, pull_request_number, created_at DESC);
@@ -53,6 +59,8 @@ CREATE TABLE IF NOT EXISTS findings (
     file_path              TEXT NOT NULL,
     line                    INTEGER,
     col                     INTEGER,
+    end_line                INTEGER,
+    end_col                 INTEGER,
 
     severity                VARCHAR(10) NOT NULL,
     category                VARCHAR(30) NOT NULL,
@@ -60,8 +68,18 @@ CREATE TABLE IF NOT EXISTS findings (
     message                 TEXT NOT NULL,
     tool                    VARCHAR(30) NOT NULL,
     fingerprint             TEXT NOT NULL,
-    remediation_minutes     INTEGER
+    remediation_minutes     INTEGER,
+
+    -- Tool-specific extras that don't fit the columns above (e.g.
+    -- Bandit's confidence/CWE, Pylint's message-id) — see
+    -- domain/finding.py's own docstring for why this exists instead of
+    -- forcing everything into generic columns.
+    metadata                JSONB NOT NULL DEFAULT '{}'::jsonb
 );
+
+ALTER TABLE findings ADD COLUMN IF NOT EXISTS end_line INTEGER;
+ALTER TABLE findings ADD COLUMN IF NOT EXISTS end_col INTEGER;
+ALTER TABLE findings ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb;
 
 CREATE INDEX IF NOT EXISTS idx_findings_result
     ON findings (result_id);

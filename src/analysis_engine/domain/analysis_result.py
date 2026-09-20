@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 from .finding import Finding
 from .metrics import AnalysisMetrics, FileStatistic, RuleStatistic
+from .python_metrics import PythonAnalysisResult
 
 AnalysisStatus = Literal["completed", "failed"]
 
@@ -36,10 +37,21 @@ class AnalysisResult(BaseModel):
     # Owned exclusively by this service — computed once in
     # metrics/calculator.py from `findings` plus each analyzed file's line
     # count. Every consumer (main-backend, web-interface) only ever
-    # displays these values, never recomputes them.
+    # displays these values, never recomputes them. JS/TS-specific (see
+    # metrics/file_scanner.py's extension set) — a Python-only repository
+    # leaves these at their zero-value defaults; `python` below is where
+    # Python's own equivalents live, kept separate rather than forced into
+    # this JS/TS-shaped model.
     metrics: AnalysisMetrics = Field(default_factory=AnalysisMetrics)
     rule_statistics: list[RuleStatistic] = Field(default_factory=list)
     file_statistics: list[FileStatistic] = Field(default_factory=list)
+
+    # Populated only when the workspace contains Python (see
+    # factories/language_detector.py + analyzers/python/). None, not a
+    # zero-valued PythonAnalysisResult, when no Python was detected at
+    # all — that's a materially different fact than "Python was analyzed
+    # and every tool happened to fail".
+    python: PythonAnalysisResult | None = None
 
     started_at: datetime
     completed_at: datetime | None = None
