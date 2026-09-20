@@ -25,6 +25,15 @@ dependencies = [
     "pylint==4.0.8",
     "radon==6.0.1",
     "bandit==1.9.4",
+    # Repository indexing (see indexing/README.md) — parses source into a
+    # symbol/call graph so review has whole-repo context instead of one
+    # file at a time. Pinned for the same reason the analyzers are: the
+    # indexer reads grammar-specific AST node type names, which a grammar
+    # major version can rename.
+    "tree-sitter==0.26.0",
+    "tree-sitter-python==0.25.0",
+    "tree-sitter-javascript==0.25.0",
+    "tree-sitter-typescript==0.23.2",
 ]
 
 [project.optional-dependencies]
