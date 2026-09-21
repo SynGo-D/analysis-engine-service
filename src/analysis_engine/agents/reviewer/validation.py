@@ -39,7 +39,7 @@ def validate_review(output: ReviewerOutput, workspace: Path, findings: list[Find
     Dropped candidates are recorded with the reason (for evaluation), never
     shown as findings.
     """
-    files = _FileCache(workspace)
+    files = FileCache(workspace)
     kept: list[AgentFinding] = []
     dropped: list[DroppedCandidate] = []
 
@@ -91,7 +91,7 @@ def validate_review(output: ReviewerOutput, workspace: Path, findings: list[Find
 
 
 def _check_candidate(
-    candidate: CandidateIssue, files: "_FileCache", findings: list[Finding]
+    candidate: CandidateIssue, files: "FileCache", findings: list[Finding]
 ) -> tuple[str | None, list[ReviewEvidence]]:
     lines = files.lines(candidate.file_path)
     if lines is None:
@@ -101,7 +101,7 @@ def _check_candidate(
 
     checked: list[ReviewEvidence] = []
     for item in candidate.evidence:
-        problem, verified = _check_evidence(item, files, findings)
+        problem, verified = check_evidence(item, files, findings)
         if problem:
             return problem, []
         checked.append(ReviewEvidence(type=item.type, ref=item.ref, quote=item.quote, verified=verified))
@@ -111,7 +111,7 @@ def _check_candidate(
     return None, checked
 
 
-def _check_evidence(item: Evidence, files: "_FileCache", findings: list[Finding]) -> tuple[str | None, bool]:
+def check_evidence(item: Evidence, files: "FileCache", findings: list[Finding]) -> tuple[str | None, bool]:
     if item.type == "linter_finding":
         if resolve_finding_ref(item.ref, findings) is None:
             return f"cites a linter finding that doesn't exist: {item.ref}", False
@@ -165,7 +165,7 @@ def _fingerprint(repository: str, candidate: CandidateIssue) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
-class _FileCache:
+class FileCache:
     """Reads each workspace file once, through the same path guard as the tools."""
 
     def __init__(self, workspace: Path):

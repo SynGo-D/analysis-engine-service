@@ -26,11 +26,14 @@ def main() -> None:
     parser.add_argument("--cases", help="comma-separated case ids or id prefixes, e.g. 'py-,clean-rename'")
     parser.add_argument("--concurrency", type=int, default=4)
     parser.add_argument("--max-cost", type=float, default=0.25, help="stop starting cases after this many USD")
+    parser.add_argument("--no-verifier", action="store_true", help="report the Reviewer's issues without verification")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.WARNING, format="%(message)s")
     if args.model:
         settings.reviewer_model = args.model
+    if args.no_verifier:
+        settings.verifier_enabled = False
 
     cases = ALL_CASES
     if args.cases:
@@ -51,9 +54,10 @@ def main() -> None:
 
     if not args.dry_run:
         path = save(scores, summary, settings.reviewer_model, context_tokens)
-        previous = previous_summary(settings.reviewer_model, exclude=path)
+        previous = previous_summary(settings.reviewer_model, [s.case_id for s in scores], exclude=path)
         if previous:
-            print(f"\n  previous run: precision {previous['precision']}, recall {previous['recall']}, "
+            print(f"\n  previous run on these cases (verifier {'on' if previous['verifier'] else 'off'}): "
+                  f"precision {previous['precision']}, recall {previous['recall']}, "
                   f"clean false alarms {previous['clean_false_alarm_rate']}, cost ${previous['total_cost_usd']:.5f}")
         print(f"\n  saved to {path}")
     else:

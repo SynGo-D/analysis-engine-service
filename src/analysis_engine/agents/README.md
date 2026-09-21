@@ -11,6 +11,8 @@ agents/
 │   ├── agent_loop.py        the tool loop, budgets, forced final answer
 │   ├── strict_schema.py     Pydantic model → OpenAI strict JSON schema
 │   └── pricing.py           per-model prices; every reported cost uses it
+├── verifier/         Agent 2 (phase 4): tries to refute each reported issue
+│   ├── prompt.md, schema.py, agent.py   (its verdict is applied in review/verification.py)
 └── reviewer/         Agent 1 (phase 2)
     ├── prompt.md            instructions (sent with every call)
     ├── schema.py            ReviewerOutput: what submit_review must contain

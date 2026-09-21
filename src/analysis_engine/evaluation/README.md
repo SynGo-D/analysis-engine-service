@@ -51,6 +51,29 @@ and a log injection). The cases were fixed, not the scores.
 | p95 duration | 12 s |
 | cost | **$0.0006 per PR**, $0.0104 for all 18 |
 
+## With the hard cases and the Verifier (28 PRs, 2026-09-21)
+
+`cases_hard.py` adds 10 harder PRs: bugs among legitimate multi-file
+changes, two bugs in one PR, a changed contract that breaks untouched
+callers, idempotency, JWT verification, timezones, a threshold on the
+wrong total, a default flipped inside a large refactor, and two larger
+clean PRs.
+
+| Run | Recall | Precision | False alarms / clean PR | $/PR |
+|---|---|---|---|---|
+| Reviewer only (the two earlier runs combined) | 0.95 | 0.91 | 0.12 | 0.0007 |
+| + Verifier v1 | 0.71 | 1.00 | 0.00 | 0.0015 |
+| + Verifier v2 (current) | **0.95** | **0.95** | **0.12** | **0.0016** |
+
+- Still missed: the second bug in `hard-cache-two-bugs` (a cache-key
+  collision). The Reviewer never proposes it.
+- Still flagged: `hard-clean-order-notes`, "the constructor bypasses the
+  note length limit". It's arguably true (`Order(note="x"*600)` is
+  accepted), but left labelled clean: cases aren't relabelled whenever
+  the model disagrees.
+- Single runs vary. The same case can pass in one run and fail in the
+  next, so compare changes on the whole set, and rerun anything close.
+
 **Read this with care: the set is too easy to separate good from great.**
 Every case is a few small files with a single bug, and the context packs
 are 200–450 tokens. Real PRs are larger, touch many files and bury a bug

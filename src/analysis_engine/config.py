@@ -106,6 +106,17 @@ class Settings(BaseSettings):
     reviewer_max_seconds: float = 90.0
     review_max_cost_usd: float = 0.10
 
+    # Verifier (Agent 2): tries to disprove each issue the Reviewer reports.
+    # Cheap model: it answers one narrow question per call.
+    verifier_enabled: bool = True
+    verifier_model: str = "gpt-5.6-luna"
+    verifier_reasoning_effort: str = "low"
+    verifier_max_rounds: int = 4
+    verifier_max_output_tokens: int = 4_000
+    verifier_max_seconds: float = 45.0
+    verifier_max_cost_usd: float = 0.02      # per issue
+    verifier_concurrency: int = 5
+
     # PRs above either size are skipped: too big to review well, and the
     # cost would scale with them.
     review_max_files: int = 60

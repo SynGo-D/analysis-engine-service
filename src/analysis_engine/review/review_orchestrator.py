@@ -12,6 +12,7 @@ from ..domain.agent_review import ReviewSkipReason
 from ..domain.code_index import RepoIndex
 from ..retrieval import RetrievalTools, ToolExecutor
 from .reporter import rank_and_cap, risk_level
+from .verification import verify_findings
 
 logger = logging.getLogger(__name__)
 
@@ -103,23 +104,45 @@ class ReviewOrchestrator:
             return _finish(review, status="failed", error=run.error or f"Reviewer stopped: {run.stop_reason}")
 
         validated = validate_review(run.output, workspace, result.findings, job.repository)
-        reported = rank_and_cap(validated.findings)
+        surviving = validated.findings
+        refuted = []
+
+        if settings.verifier_enabled and surviving:
+            verification = await verify_findings(
+                self._provider, surviving, workspace=workspace, index=index, linter_findings=result.findings,
+                job=job, change_set=result.changes.change_set, summary=validated.summary,
+            )
+            surviving, refuted = verification.kept, verification.refuted
+            stats.verifier_calls = verification.calls
+            stats.verifier_cost_usd = round(verification.cost_usd, 6) if verification.cost_usd is not None else None
+            stats.input_tokens += verification.usage.input_tokens
+            stats.cached_tokens += verification.usage.cached_tokens
+            stats.output_tokens += verification.usage.output_tokens
+            stats.reasoning_tokens += verification.usage.reasoning_tokens
+            stats.cost_usd = (
+                round(stats.cost_usd + verification.cost_usd, 6)
+                if stats.cost_usd is not None and verification.cost_usd is not None else None
+            )
+            stats.duration_ms = int((time.monotonic() - started) * 1000)
+
+        reported = rank_and_cap(surviving)
 
         stats.candidates_proposed = len(run.output.candidates)
         stats.candidates_dropped = len(validated.dropped)
+        stats.candidates_refuted = len(refuted)
         stats.findings_reported = len(reported)
 
         review.summary = validated.summary
         review.areas_touched = validated.areas_touched
         review.findings = reported
         review.linter_triage = validated.linter_triage
-        review.dropped = validated.dropped
+        review.dropped = validated.dropped + refuted
         review.triage_dropped = validated.triage_dropped
         review.risk_level = risk_level(reported)
 
         logger.info(
-            "[job:%s] AI review: %d reported, %d dropped, %d triaged, $%s",
-            job.job_id, len(reported), len(validated.dropped), len(validated.linter_triage),
+            "[job:%s] AI review: %d reported, %d dropped, %d refuted, %d triaged, $%s",
+            job.job_id, len(reported), len(validated.dropped), len(refuted), len(validated.linter_triage),
             f"{stats.cost_usd:.5f}" if stats.cost_usd is not None else "unknown",
         )
         return _finish(review, status="completed")

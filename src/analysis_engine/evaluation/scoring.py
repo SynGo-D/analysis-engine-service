@@ -31,6 +31,9 @@ class CaseScore:
     dropped_by_validation: int = 0
     missed: list[str] = field(default_factory=list)
     unexpected: list[str] = field(default_factory=list)
+    # Why issues were discarded, "stage: title — reason". Most useful when a
+    # planted bug is missed: was it never proposed, or proposed and dropped?
+    drop_reasons: list[str] = field(default_factory=list)
     cost_usd: float = 0.0
     duration_ms: int = 0
     input_tokens: int = 0
@@ -81,6 +84,7 @@ def score_case(case: Case, review: AgentReview | None) -> CaseScore:
     score.found = len(matched)
     score.missed = [loc.expected.what for i, loc in enumerate(locations) if i not in matched]
     score.dropped_by_validation = len(review.dropped)
+    score.drop_reasons = [f"{d.stage}: {d.title} — {d.reason}" for d in review.dropped]
     _add_stats(score, review)
     return score
 

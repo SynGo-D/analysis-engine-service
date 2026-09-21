@@ -67,6 +67,8 @@ class DroppedCandidate(BaseModel):
 
     title: str
     reason: str
+    # "evidence": failed the mechanical checks. "verifier": refuted by Agent 2.
+    stage: Literal["evidence", "verifier"] = "evidence"
 
 
 class DroppedTriage(BaseModel):
@@ -89,8 +91,12 @@ class ReviewStats(BaseModel):
     cost_usd: float | None = None
     duration_ms: int = 0
     candidates_proposed: int = 0
-    candidates_dropped: int = 0
+    candidates_dropped: int = 0          # by the evidence checks
+    candidates_refuted: int = 0          # by the Verifier
     findings_reported: int = 0
+    # cost_usd above is the whole review; this is the Verifier's share.
+    verifier_calls: int = 0
+    verifier_cost_usd: float | None = None
 
 
 class AgentReview(BaseModel):
