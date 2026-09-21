@@ -9,6 +9,11 @@ target the ways a reviewer fails on real pull requests:
 - domain bugs that need reasoning, not pattern matching (idempotency,
   token verification, timezones, a threshold on the wrong total);
 - larger clean PRs, where staying quiet is harder.
+
+The refactor cases' `totalHours` first used `.reduce()`, which a review
+correctly flagged: the old `for...of` accepted any iterable (a Set, say)
+and `totalHours` is exported, so "no behaviour change" wasn't true. The
+case was fixed to really preserve behaviour.
 """
 
 from .case import Case, Expected
@@ -414,9 +419,13 @@ function csvExport(projects, entries) {
 module.exports = { totalHours, listProjects, summarizeProjects, csvExport };
 '''
 
-_REPORTS_HEAD = '''/** Sum of hours across time entries. */
+_REPORTS_HEAD = '''/** Sum of hours across time entries (any iterable, as before). */
 function totalHours(entries) {
-  return entries.reduce((sum, entry) => sum + entry.hours, 0);
+  let total = 0;
+  for (const entry of entries) {
+    total += entry.hours;
+  }
+  return total;
 }
 
 /** Projects sorted by name, without archived ones unless asked for. */

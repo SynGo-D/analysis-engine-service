@@ -25,7 +25,9 @@ class ValidatedReview:
     triage_dropped: list[DroppedTriage] = field(default_factory=list)
 
 
-def validate_review(output: ReviewerOutput, workspace: Path, findings: list[Finding], repository: str) -> ValidatedReview:
+def validate_review(
+    output: ReviewerOutput, workspace: Path, findings: list[Finding], repository: str, rules=None
+) -> ValidatedReview:
     """
     Checks every claim the Reviewer made against the repository, and keeps
     only what holds up (docs/agent-architecture.md §8.1).
@@ -34,7 +36,8 @@ def validate_review(output: ReviewerOutput, workspace: Path, findings: list[Find
     invents code. A candidate is dropped when:
       - its file or lines don't exist;
       - any quote doesn't appear at the location it cites;
-      - it cites a linter finding that doesn't exist;
+      - it cites a linter finding or a business rule that doesn't exist;
+      - it claims a rule violation without citing the rule;
       - none of its evidence could be verified at all.
     Dropped candidates are recorded with the reason (for evaluation), never
     shown as findings.
@@ -44,15 +47,16 @@ def validate_review(output: ReviewerOutput, workspace: Path, findings: list[Find
     dropped: list[DroppedCandidate] = []
 
     for candidate in output.candidates:
-        problem, evidence = _check_candidate(candidate, files, findings)
+        problem, evidence = _check_candidate(candidate, files, findings, rules)
         if problem:
             dropped.append(DroppedCandidate(title=candidate.title, reason=problem))
             continue
+        rule_ids = [e.ref.strip().strip("[]") for e in evidence if e.type == "business_rule"]
         kept.append(AgentFinding(
             fingerprint=_fingerprint(repository, candidate),
             title=candidate.title,
             category=candidate.category,
-            severity=candidate.severity,
+            severity=_capped_severity(candidate.severity, rule_ids, rules),
             confidence=candidate.confidence,
             file_path=candidate.file_path,
             line_start=candidate.line_start,
@@ -60,6 +64,7 @@ def validate_review(output: ReviewerOutput, workspace: Path, findings: list[Find
             explanation=candidate.explanation,
             evidence=evidence,
             suggested_fix=candidate.suggested_fix,
+            rule_ids=rule_ids,
         ))
 
     triage = []
@@ -91,7 +96,7 @@ def validate_review(output: ReviewerOutput, workspace: Path, findings: list[Find
 
 
 def _check_candidate(
-    candidate: CandidateIssue, files: "FileCache", findings: list[Finding]
+    candidate: CandidateIssue, files: "FileCache", findings: list[Finding], rules=None
 ) -> tuple[str | None, list[ReviewEvidence]]:
     lines = files.lines(candidate.file_path)
     if lines is None:
@@ -101,17 +106,26 @@ def _check_candidate(
 
     checked: list[ReviewEvidence] = []
     for item in candidate.evidence:
-        problem, verified = check_evidence(item, files, findings)
+        problem, verified = check_evidence(item, files, findings, rules)
         if problem:
             return problem, []
         checked.append(ReviewEvidence(type=item.type, ref=item.ref, quote=item.quote, verified=verified))
 
-    if not any(e.verified for e in checked):
+    if candidate.category == "business_rule" and not any(e.type == "business_rule" for e in checked):
+        return "claims a business-rule violation without citing the rule", []
+    # A rule citation proves the rule exists, not that the code breaks it,
+    # so it doesn't count on its own: the violation must be shown in code.
+    if not any(e.verified and e.type != "business_rule" for e in checked):
         return "no evidence could be verified (needs a matching code quote or a real linter finding)", []
     return None, checked
 
 
-def check_evidence(item: Evidence, files: "FileCache", findings: list[Finding]) -> tuple[str | None, bool]:
+def check_evidence(item: Evidence, files: "FileCache", findings: list[Finding], rules=None) -> tuple[str | None, bool]:
+    if item.type == "business_rule":
+        if rules is None or rules.get(item.ref) is None:
+            return f"cites a business rule that doesn't exist: {item.ref}", False
+        return None, True
+
     if item.type == "linter_finding":
         if resolve_finding_ref(item.ref, findings) is None:
             return f"cites a linter finding that doesn't exist: {item.ref}", False
@@ -139,6 +153,18 @@ def check_evidence(item: Evidence, files: "FileCache", findings: list[Finding]) 
         return None, True
 
     return None, False  # call_path: accepted, but not mechanically checked
+
+
+_SEVERITY_RANK = {"low": 0, "medium": 1, "high": 2}
+
+
+def _capped_severity(severity: str, rule_ids: list[str], rules) -> str:
+    """A rule sets the highest severity an issue citing it can have (§9.1)."""
+    caps = [rules.get(rule_id).severity for rule_id in rule_ids if rules and rules.get(rule_id)]
+    if not caps:
+        return severity
+    cap = max(caps, key=_SEVERITY_RANK.__getitem__)
+    return severity if _SEVERITY_RANK[severity] <= _SEVERITY_RANK[cap] else cap
 
 
 def _parse_location(ref: str) -> tuple[str, int, int] | None:

@@ -74,6 +74,21 @@ clean PRs.
 - Single runs vary. The same case can pass in one run and fail in the
   next, so compare changes on the whole set, and rerun anything close.
 
+## With business rules (35 PRs, 2026-09-21)
+
+`cases_rules.py` adds 7 PRs whose "bugs" are fine as generic code and wrong
+only because the repository's `.codepulse/rules.yml` says so: logging a
+customer email, refunds without approval, cancelling shipped orders, money
+as floats, and a PR that deletes the very rule it breaks. Two clean PRs
+cover a compliant change and a change outside every rule's scope.
+
+| | |
+|---|---|
+| recall | **25/25**: every planted bug and every rule violation, including the cache-key collision missed in all earlier runs |
+| unexpected reports | 3. One was correct: the "clean" refactor's `.reduce()` rejected iterables the old loop accepted, so the case was fixed. One borderline: the order-notes constructor. One nitpick: "the refund amount isn't enforced to be integer cents" |
+| clean PRs with a false alarm | 1 of 10 after the correction |
+| cost | $0.0014 per PR, $0.048 for all 35 |
+
 **Read this with care: the set is too easy to separate good from great.**
 Every case is a few small files with a single bug, and the context packs
 are 200–450 tokens. Real PRs are larger, touch many files and bury a bug

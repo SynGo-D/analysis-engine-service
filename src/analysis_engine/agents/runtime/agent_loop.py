@@ -130,8 +130,15 @@ async def _loop(provider, state: AgentRun, price, *, model, instructions, user_c
     items: list = [provider.user_message(user_content)]
     force_final = False
     repair_used = False
+    # A repair is always possible, even when the bad answer came on the last
+    # round: one extra round is allowed for it. Without this, a malformed
+    # final answer at the limit ended the run with nothing (seen in
+    # evaluation as "verifier budget exhausted").
+    last_round = budget.max_rounds
 
-    for round_number in range(1, budget.max_rounds + 1):
+    round_number = 0
+    while round_number < last_round:
+        round_number += 1
         remaining_tokens = budget.max_output_tokens - state.usage.output_tokens
         spent = state.cost_usd or 0.0
 
@@ -139,7 +146,7 @@ async def _loop(provider, state: AgentRun, price, *, model, instructions, user_c
             state.error = f"Cost cap ${budget.max_cost_usd:.2f} reached."
             return
         if (
-            round_number == budget.max_rounds
+            round_number >= budget.max_rounds
             or remaining_tokens < _FINAL_ANSWER_RESERVE_TOKENS
             or spent >= budget.max_cost_usd * _COST_WIND_DOWN
         ):
@@ -180,6 +187,7 @@ async def _loop(provider, state: AgentRun, price, *, model, instructions, user_c
                     return
                 repair_used = True
                 force_final = True
+                last_round = max(last_round, round_number + 1)
                 # Every call in the turn must be answered before the next
                 # request, or the API rejects it.
                 for call in completion.tool_calls:

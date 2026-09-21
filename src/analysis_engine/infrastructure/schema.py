@@ -109,6 +109,25 @@ CREATE TABLE IF NOT EXISTS agent_reviews (
 
 CREATE INDEX IF NOT EXISTS idx_agent_reviews_repo
     ON agent_reviews (repository, pull_request_number, created_at DESC);
+
+-- Business rules stored per repository (see domain/business_rule.py):
+-- added in the dashboard, or suggested by the Rule Miner. Rules from a
+-- repository's own .codepulse/rules.yml are not stored; they're read from
+-- the target branch at review time.
+CREATE TABLE IF NOT EXISTS business_rules (
+    repository   TEXT NOT NULL,
+    rule_id      VARCHAR(40) NOT NULL,
+    rule         TEXT NOT NULL,
+    applies_to   JSONB NOT NULL DEFAULT '[]'::jsonb,
+    severity     VARCHAR(10) NOT NULL CHECK (severity IN ('high', 'medium', 'low')),
+    rationale    TEXT,
+    source       VARCHAR(20) NOT NULL CHECK (source IN ('dashboard', 'suggested')),
+    status       VARCHAR(20) NOT NULL CHECK (status IN ('active', 'suggested', 'rejected')),
+    evidence     TEXT,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (repository, rule_id)
+);
 """
 
 

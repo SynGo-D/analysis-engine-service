@@ -9,6 +9,7 @@ from .agent_review import (
     ReviewSkipReason,
     ReviewStats,
     ReviewStatus,
+    RuleCheck,
     TriagedLinterFinding,
 )
 from .analysis_result import AnalysisResult, AnalysisStatus
@@ -65,6 +66,7 @@ __all__ = [
     "ReviewSkipReason",
     "ReviewStats",
     "ReviewStatus",
+    "RuleCheck",
     "TriagedLinterFinding",
     "ChangeSet",
     "ChangeStatus",

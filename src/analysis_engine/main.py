@@ -11,10 +11,13 @@ from .infrastructure.database import connect_database
 from .infrastructure.rabbitmq import connect_rabbitmq, create_channel
 from .infrastructure.schema import ensure_schema
 from .repositories.agent_review_repository import AgentReviewRepository
+from .repositories.business_rule_repository import BusinessRuleRepository
 from .repositories.analysis_result_repository import AnalysisResultRepository
 from .review import ReviewOrchestrator, build_default_provider
 from .api.health import router as health_router
 from .api.analysis import router as analysis_router
+from .api.rules import router as rules_router
+from .rules.mining import RuleMiner
 
 logging.basicConfig(
     level=logging.INFO,
@@ -43,7 +46,11 @@ async def lifespan(app: FastAPI):
     logging.getLogger(__name__).info(
         "AI review: %s", f"enabled ({settings.reviewer_model})" if provider else "disabled (no OPENAI_API_KEY)"
     )
-    orchestrator = AnalysisOrchestrator(review_orchestrator=ReviewOrchestrator(provider))
+    app.state.business_rule_repository = BusinessRuleRepository(app.state.db_pool)
+    app.state.rule_miner = RuleMiner(provider) if provider else None
+    orchestrator = AnalysisOrchestrator(
+        review_orchestrator=ReviewOrchestrator(provider, rule_source=app.state.business_rule_repository)
+    )
     consumer = PRQueueConsumer(
         orchestrator, app.state.analysis_result_repository, AgentReviewRepository(app.state.db_pool)
     )
@@ -70,3 +77,4 @@ app.add_middleware(
 
 app.include_router(health_router)
 app.include_router(analysis_router)
+app.include_router(rules_router)

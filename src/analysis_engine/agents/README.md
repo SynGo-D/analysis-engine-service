@@ -11,6 +11,8 @@ agents/
 │   ├── agent_loop.py        the tool loop, budgets, forced final answer
 │   ├── strict_schema.py     Pydantic model → OpenAI strict JSON schema
 │   └── pricing.py           per-model prices; every reported cost uses it
+├── rule_miner/       Agent 3 (phase 5): suggests business rules from a repository's docs, tests and code
+│   ├── prompt.md, schema.py, agent.py   (driven by rules/mining.py)
 ├── verifier/         Agent 2 (phase 4): tries to refute each reported issue
 │   ├── prompt.md, schema.py, agent.py   (its verdict is applied in review/verification.py)
 └── reviewer/         Agent 1 (phase 2)

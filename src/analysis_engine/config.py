@@ -117,6 +117,13 @@ class Settings(BaseSettings):
     verifier_max_cost_usd: float = 0.02      # per issue
     verifier_concurrency: int = 5
 
+    # Rule Miner (Agent 3): on demand only, never per PR.
+    rule_miner_model: str = "gpt-5.6-luna"
+    rule_miner_max_rounds: int = 8
+    rule_miner_max_output_tokens: int = 8_000
+    rule_miner_max_seconds: float = 120.0
+    rule_miner_max_cost_usd: float = 0.05
+
     # PRs above either size are skipped: too big to review well, and the
     # cost would scale with them.
     review_max_files: int = 60

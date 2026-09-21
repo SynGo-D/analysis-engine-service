@@ -4,7 +4,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ..reviewer.schema import Evidence
 
-Question = Literal["evidence_matches", "reachable", "guarded_elsewhere", "already_handled", "intended", "material"]
+Question = Literal[
+    "evidence_matches", "reachable", "guarded_elsewhere", "already_handled", "intended", "material", "rule_applies"
+]
 
 
 class _Strict(BaseModel):

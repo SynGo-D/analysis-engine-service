@@ -18,7 +18,7 @@ RiskLevel = Literal["low", "medium", "high"]
 
 
 class ReviewEvidence(BaseModel):
-    type: Literal["code_location", "linter_finding", "call_path", "test"]
+    type: Literal["code_location", "linter_finding", "business_rule", "call_path", "test"]
     ref: str
     quote: str | None = None
     # True when the engine checked it against the repository (the quote is
@@ -34,7 +34,7 @@ class AgentFinding(BaseModel):
     # Stable across pushes to the same PR, so feedback carries over (§10.1).
     fingerprint: str
     title: str
-    category: Literal["correctness", "security"]
+    category: Literal["correctness", "security", "business_rule"]
     severity: Severity
     confidence: float
     file_path: str
@@ -43,6 +43,8 @@ class AgentFinding(BaseModel):
     explanation: str
     evidence: list[ReviewEvidence]
     suggested_fix: str | None = None
+    # Business rules this issue cites (their ids), when it's a rule violation.
+    rule_ids: list[str] = Field(default_factory=list)
     # Phase 4 adds the Verifier; until then every reported issue has only
     # passed the engine's mechanical evidence checks.
     verification: Literal["unverified", "verified"] = "unverified"
@@ -60,6 +62,20 @@ class TriagedLinterFinding(BaseModel):
     message: str
     importance: Severity
     reason: str
+
+
+class RuleCheck(BaseModel):
+    """How the PR stands against one business rule."""
+
+    rule_id: str
+    rule: str
+    severity: Severity
+    # "violated" only when a reported issue that cites the rule survived
+    # every check. "not_confirmed": the Reviewer said violated, but no such
+    # issue survived. "not_checked": the rule applied and the Reviewer gave
+    # no verdict.
+    outcome: Literal["violated", "satisfied", "not_applicable", "not_confirmed", "not_checked"]
+    note: str | None = None
 
 
 class DroppedCandidate(BaseModel):
@@ -118,6 +134,9 @@ class AgentReview(BaseModel):
     linter_triage: list[TriagedLinterFinding] = Field(default_factory=list)
     dropped: list[DroppedCandidate] = Field(default_factory=list)
     triage_dropped: list[DroppedTriage] = Field(default_factory=list)
+    rule_checks: list[RuleCheck] = Field(default_factory=list)
+    # Problems with the repository's rules file, e.g. a malformed rule.
+    rule_errors: list[str] = Field(default_factory=list)
 
     stats: ReviewStats | None = None
     error_message: str | None = None

@@ -10,6 +10,7 @@ Work through each question, using tools when the answer isn't in front of you. F
 - guarded_elsewhere: does a caller, a check a few lines away, or the framework already prevent it?
 - already_handled: does the PR handle it elsewhere, or does a test cover exactly this case?
 - intended: does the PR's description say this exact behaviour is deliberate? (A description that promises something the code breaks *confirms* the issue.)
+- rule_applies (only for business-rule issues): does the cited rule really govern this code, or only something similar? The repository's own rules outrank general conventions, so a genuine violation is material even if the code would be fine elsewhere.
 - material: is this a real defect with a realistic consequence, rather than a style or design preference, a theoretical edge case, or a request for extra hardening the PR never promised?
 
 # Verdict

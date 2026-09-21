@@ -81,6 +81,11 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
         _schema({"text": _STRING, "path_glob": _OPTIONAL_STRING}),
     ),
     ToolSpec(
+        "get_rule",
+        "A business rule's full text, by id (e.g. 'BR-PRICING-001').",
+        _schema({"rule_id": _STRING}),
+    ),
+    ToolSpec(
         "get_linter_findings",
         "Linter findings, optionally filtered by file, rule, or changed lines only.",
         _schema({"path": _OPTIONAL_STRING, "rule_id": _OPTIONAL_STRING, "changed_only": {"type": ["boolean", "null"]}}),
@@ -112,6 +117,10 @@ class _Name(_Args):
 class _Search(_Args):
     text: str
     path_glob: str | None = Field(default=None, max_length=200)
+
+
+class _RuleId(_Args):
+    rule_id: str = Field(min_length=1, max_length=50)
 
 
 class _Findings(_Args):
@@ -156,6 +165,7 @@ class ToolExecutor:
             "list_tests_for": (_SymbolId, t.list_tests_for),
             "search_code": (_Search, t.search_code),
             "get_linter_findings": (_Findings, t.get_linter_findings),
+            "get_rule": (_RuleId, t.get_rule),
         }
 
     async def execute(self, name: str, arguments: dict[str, Any] | str) -> str:
