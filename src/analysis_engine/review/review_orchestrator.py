@@ -10,7 +10,7 @@ from ..context import ContextPackBuilder
 from ..domain import AgentReview, AnalysisJob, AnalysisResult, PullRequestChanges, ReviewStats
 from ..domain.agent_review import ReviewSkipReason
 from ..domain.code_index import RepoIndex
-from ..domain import RuleCheck
+from ..domain import DroppedCandidate, RuleCheck
 from ..retrieval import RetrievalTools, ToolExecutor
 from ..rules import RuleSet, load_rules
 from ..rules.rule_set import RuleSource
@@ -35,12 +35,16 @@ class ReviewOrchestrator:
         provider: LLMProvider | None = None,
         pack_builder: ContextPackBuilder | None = None,
         rule_source: RuleSource | None = None,
+        feedback_source=None,
     ):
         self._provider = provider
         self._pack_builder = pack_builder or ContextPackBuilder()
         # Rules stored for the repository (dashboard / accepted suggestions).
         # The repository's own rules file is always read, with or without it.
         self._rule_source = rule_source
+        # Anything with `wrong_fingerprints(repository) -> set[str]`: issues
+        # a developer marked wrong are not reported again (phase 6).
+        self._feedback_source = feedback_source
 
     def skip_reason(self, changes: PullRequestChanges | None) -> ReviewSkipReason | None:
         if self._provider is None:
@@ -89,6 +93,25 @@ class ReviewOrchestrator:
         except Exception as error:
             logger.exception("[job:%s] AI review failed", job.job_id)
             return _finish(review, status="failed", error=f"{type(error).__name__}: {error}"[:500])
+
+    async def _without_rejected(self, repository: str, findings):
+        """
+        Drops issues a developer already marked wrong. The fingerprint
+        ignores line numbers, so the same issue on a later push to the PR
+        matches, and reporting it again would repeat a known false alarm.
+        """
+        if self._feedback_source is None or not findings:
+            return findings, []
+        try:
+            rejected = await self._feedback_source.wrong_fingerprints(repository)
+        except Exception:
+            logger.exception("could not load feedback for %s; reporting without it", repository)
+            return findings, []
+        kept = [f for f in findings if f.fingerprint not in rejected]
+        dropped = [DroppedCandidate(title=f.title, stage="feedback",
+                                    reason="a developer marked this issue wrong on an earlier review")
+                   for f in findings if f.fingerprint in rejected]
+        return kept, dropped
 
     async def _review(self, workspace, job, result, index, review, started) -> AgentReview:
         change_set = result.changes.change_set
@@ -140,6 +163,8 @@ class ReviewOrchestrator:
             )
             stats.duration_ms = int((time.monotonic() - started) * 1000)
 
+        surviving, rejected_before = await self._without_rejected(job.repository, surviving)
+        refuted = refuted + rejected_before
         reported = rank_and_cap(surviving)
 
         stats.candidates_proposed = len(run.output.candidates)

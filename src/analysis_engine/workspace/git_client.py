@@ -1,4 +1,5 @@
 import asyncio
+import os
 import re
 from pathlib import Path
 from urllib.parse import urlparse
@@ -91,14 +92,14 @@ def validate_branch(branch: str) -> None:
         )
 
 
-async def _run_git(args: list[str], cwd: Path, timeout: float) -> None:
+async def _run_git(args: list[str], cwd: Path, timeout: float, env: dict[str, str] | None = None) -> None:
     """
     Runs a git command via argument-list execution — never shell=True and
     never a string-interpolated command. This is what actually prevents
     shell injection: even a maliciously crafted argument is passed to git
     as one literal value, never interpreted by a shell.
     """
-    await run_git_output(args, cwd, timeout)
+    await run_git_output(args, cwd, timeout, env=env)
 
 
 async def run_git_output(
@@ -106,6 +107,7 @@ async def run_git_output(
     cwd: Path,
     timeout: float,
     allowed_exit_codes: tuple[int, ...] = (0,),
+    env: dict[str, str] | None = None,
 ) -> tuple[int, bytes]:
     """
     Same execution rules as `_run_git`, but returns (exit code, stdout).
@@ -117,12 +119,18 @@ async def run_git_output(
     stdout is returned as bytes: diff output contains file content in
     whatever encoding the repository uses, and decoding is the caller's
     decision.
+
+    `env` adds variables for this one command, e.g. credentials from
+    `credentials.git_auth_env`. They're never put in os.environ, so no
+    other subprocess (linters, agent tools) ever inherits them. Git never
+    prompts: with no usable credentials it fails instead of hanging.
     """
     process = await asyncio.create_subprocess_exec(
         "git", *args,
         cwd=str(cwd),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
+        env={**os.environ, "GIT_TERMINAL_PROMPT": "0", **(env or {})},
     )
 
     try:
@@ -148,6 +156,7 @@ async def clone_commit(
     destination: Path,
     timeout: float | None = None,
     fetch_depth: int = 50,
+    git_env: dict[str, str] | None = None,
 ) -> None:
     """
     Fetches `branch` (shallow, `fetch_depth` commits) and checks out the
@@ -182,7 +191,7 @@ async def clone_commit(
     # even though validate_branch already rejects a leading '-'.
     await _run_git(
         ["fetch", "--depth", str(fetch_depth), "origin", "--", branch],
-        cwd=destination, timeout=effective_timeout,
+        cwd=destination, timeout=effective_timeout, env=git_env,
     )
     # Same "--" reasoning for commit_sha here — ref before "--", not after
     # (checkout treats anything after "--" as a pathspec, not a ref).

@@ -43,3 +43,23 @@ turns it off even when a key is present.
 # paid (about $0.001 on gpt-5.6-luna, hard-capped): the real review
 .venv/bin/python scripts/review_pr.py <clone_url> <branch> <target> --pr <n> --save
 ```
+
+## Feedback (phase 6)
+
+Developers rate each AI issue **useful**, **not useful** or **wrong**
+(`PUT .../review/findings/{fingerprint}/feedback`). One verdict per user
+per issue; changing it replaces it. The user comes from the `X-User-Id`
+header, which main-backend sets from the verified session and never
+forwards from the browser (checked live: a request claiming another user
+is recorded as its real sender).
+
+- **An issue marked wrong isn't reported again.** The fingerprint ignores
+  line numbers, so the same issue on a later push matches. It's dropped
+  with `stage: "feedback"`, visible in `dropped` for evaluation.
+- **Feedback is attached when a review is read:** counts per verdict, plus
+  the requesting user's own (`finding.feedback`).
+- **`GET /api/repositories/{o}/{r}/review-usage?days=30`** reports reviews
+  (completed, failed, skipped), total and per-review cost, issues
+  reported, and the verdicts. `wrong_rate`, the share of rated issues
+  marked wrong, is the real-world false-alarm rate, the number the
+  evaluation harness can only estimate.

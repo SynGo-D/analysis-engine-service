@@ -12,10 +12,13 @@ from .infrastructure.rabbitmq import connect_rabbitmq, create_channel
 from .infrastructure.schema import ensure_schema
 from .repositories.agent_review_repository import AgentReviewRepository
 from .repositories.business_rule_repository import BusinessRuleRepository
+from .repositories.feedback_repository import FeedbackRepository
 from .repositories.analysis_result_repository import AnalysisResultRepository
 from .review import ReviewOrchestrator, build_default_provider
+from .workspace import WorkspaceManager, default_credentials
 from .api.health import router as health_router
 from .api.analysis import router as analysis_router
+from .api.analysis import usage_router
 from .api.rules import router as rules_router
 from .rules.mining import RuleMiner
 
@@ -47,9 +50,23 @@ async def lifespan(app: FastAPI):
         "AI review: %s", f"enabled ({settings.reviewer_model})" if provider else "disabled (no OPENAI_API_KEY)"
     )
     app.state.business_rule_repository = BusinessRuleRepository(app.state.db_pool)
-    app.state.rule_miner = RuleMiner(provider) if provider else None
+    app.state.feedback_repository = FeedbackRepository(app.state.db_pool)
+    # Private repositories: clone tokens from integration-service. Without
+    # INTERNAL_SERVICE_TOKEN, clones are anonymous (public repositories only).
+    credentials = default_credentials()
+    logging.getLogger(__name__).info(
+        "Private repositories: %s", "enabled (tokens from integration-service)" if credentials else
+        "disabled (no INTERNAL_SERVICE_TOKEN): public repositories only"
+    )
+    workspaces = WorkspaceManager(credentials=credentials)
+    app.state.rule_miner = RuleMiner(provider, workspace_manager=workspaces) if provider else None
     orchestrator = AnalysisOrchestrator(
-        review_orchestrator=ReviewOrchestrator(provider, rule_source=app.state.business_rule_repository)
+        workspace_manager=workspaces,
+        review_orchestrator=ReviewOrchestrator(
+            provider,
+            rule_source=app.state.business_rule_repository,
+            feedback_source=app.state.feedback_repository,
+        )
     )
     consumer = PRQueueConsumer(
         orchestrator, app.state.analysis_result_repository, AgentReviewRepository(app.state.db_pool)
@@ -78,3 +95,4 @@ app.add_middleware(
 app.include_router(health_router)
 app.include_router(analysis_router)
 app.include_router(rules_router)
+app.include_router(usage_router)

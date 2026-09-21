@@ -6,15 +6,24 @@ from pathlib import Path
 from uuid import UUID
 
 from ..domain import AnalysisJob
+from .credentials import RepositoryCredentials, git_auth_env
 from .git_client import clone_commit
 
 
 class Workspace:
     """An isolated, per-job filesystem workspace. Never reused across jobs."""
 
-    def __init__(self, job_id: UUID, path: Path):
+    def __init__(self, job_id: UUID, path: Path, git_env: dict[str, str] | None = None):
         self.job_id = job_id
         self.path = path
+        # Credentials for this repository's host, for later git network
+        # calls on the same checkout (fetching the PR's target branch).
+        # Memory only: never written to the checkout.
+        self.git_env = git_env or {}
+
+    def __repr__(self) -> str:
+        # Never print git_env: it holds a token.
+        return f"Workspace(job_id={self.job_id}, path={self.path})"
 
 
 class WorkspaceManager:
@@ -37,8 +46,17 @@ class WorkspaceManager:
     host.
     """
 
-    def __init__(self, base_dir: Path | None = None):
+    def __init__(self, base_dir: Path | None = None, credentials: RepositoryCredentials | None = None):
         self._base_dir = base_dir
+        # None: every clone is anonymous (public repositories only).
+        self._credentials = credentials
+
+    async def git_env_for(self, provider: str, repository: str) -> dict[str, str]:
+        """Git environment carrying this repository's clone token, or {} when there isn't one."""
+        if self._credentials is None:
+            return {}
+        token = await self._credentials.token_for(provider, repository)
+        return git_auth_env(provider, token) if token else {}
 
     @asynccontextmanager
     async def prepare(self, job: AnalysisJob):
@@ -50,8 +68,9 @@ class WorkspaceManager:
         )
 
         try:
-            await clone_commit(job.clone_url, job.commit_sha, job.branch, workspace_dir)
-            yield Workspace(job_id=job.job_id, path=workspace_dir)
+            git_env = await self.git_env_for(job.provider, job.repository)
+            await clone_commit(job.clone_url, job.commit_sha, job.branch, workspace_dir, git_env=git_env)
+            yield Workspace(job_id=job.job_id, path=workspace_dir, git_env=git_env)
 
         finally:
             # rmtree is blocking; running it off the event loop keeps

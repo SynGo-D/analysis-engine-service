@@ -82,6 +82,14 @@ class Settings(BaseSettings):
     bandit_bin_path: str = str(Path(sys.executable).parent / "bandit")
 
     # -------------------------------------------------------------------
+    # Private repositories: clone tokens come from integration-service's
+    # internal API. Without INTERNAL_SERVICE_TOKEN, every clone is anonymous
+    # (public repositories only).
+    # -------------------------------------------------------------------
+    integration_service_url: str = "http://localhost:5001"
+    internal_service_token: SecretStr | None = None
+
+    # -------------------------------------------------------------------
     # AI review (docs/agent-architecture.md). Without an API key the review
     # stage is skipped and linter analysis runs exactly as before.
     # -------------------------------------------------------------------

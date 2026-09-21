@@ -110,6 +110,22 @@ CREATE TABLE IF NOT EXISTS agent_reviews (
 CREATE INDEX IF NOT EXISTS idx_agent_reviews_repo
     ON agent_reviews (repository, pull_request_number, created_at DESC);
 
+-- Developer feedback on AI review issues (docs/agent-architecture.md §12,
+-- "the live signal"). Keyed by the issue's fingerprint, which ignores line
+-- numbers, so feedback follows an issue across pushes to the same PR. One
+-- verdict per user per issue: changing your mind replaces it.
+CREATE TABLE IF NOT EXISTS agent_finding_feedback (
+    repository    TEXT NOT NULL,
+    fingerprint   VARCHAR(64) NOT NULL,
+    user_id       TEXT NOT NULL,
+    verdict       VARCHAR(12) NOT NULL CHECK (verdict IN ('useful', 'not_useful', 'wrong')),
+    note          TEXT,
+    pull_request_number INTEGER,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (repository, fingerprint, user_id)
+);
+
 -- Business rules stored per repository (see domain/business_rule.py):
 -- added in the dashboard, or suggested by the Rule Miner. Rules from a
 -- repository's own .codepulse/rules.yml are not stored; they're read from
