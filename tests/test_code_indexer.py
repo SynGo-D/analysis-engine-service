@@ -264,3 +264,16 @@ def test_index_survives_a_serialization_round_trip_with_queries_intact(tmp_path)
     # rebuild them or a cached index would silently answer nothing.
     assert [c.qualified_name for c in restored.callers_of("m.py::leaf")] == ["top"]
     assert restored.find_by_name("top")[0].start_line == 4
+
+
+def test_does_not_follow_symlinks_out_of_the_repository(tmp_path):
+    # The repository controls its symlinks; a link to a file elsewhere on
+    # the host must not be parsed, or its content could reach a prompt.
+    outside = tmp_path.parent / f"{tmp_path.name}-outside.py"
+    outside.write_text("def host_secret():\n    return 'secret'\n")
+    (tmp_path / "linked.py").symlink_to(outside)
+    _write(tmp_path, "real.py", "def real():\n    return 1\n")
+
+    index = CodeIndexer().build(tmp_path)
+
+    assert [s.name for s in index.symbols] == ["real"]

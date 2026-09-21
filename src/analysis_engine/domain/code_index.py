@@ -76,6 +76,7 @@ class RepoIndex(BaseModel):
     _by_file: dict[str, list[Symbol]] = PrivateAttr(default_factory=dict)
     _outgoing: dict[str, list[Edge]] = PrivateAttr(default_factory=dict)
     _incoming: dict[str, list[Edge]] = PrivateAttr(default_factory=dict)
+    _calls_by_target_name: dict[str, list[Edge]] = PrivateAttr(default_factory=dict)
 
     def model_post_init(self, _context) -> None:
         for symbol in self.symbols:
@@ -87,6 +88,8 @@ class RepoIndex(BaseModel):
             self._outgoing.setdefault(edge.source_symbol_id, []).append(edge)
             if edge.target_symbol_id:
                 self._incoming.setdefault(edge.target_symbol_id, []).append(edge)
+            if edge.kind == "calls":
+                self._calls_by_target_name.setdefault(edge.target_name, []).append(edge)
 
     # -------------------------------------------------------------------
     # Queries — the actual interface agents (and Step 2's retrieval tools)
@@ -135,6 +138,26 @@ class RepoIndex(BaseModel):
             if e.kind == "calls" and e.source_symbol_id in self._by_id
         ]
         return list({c.symbol_id: c for c in callers}.values())
+
+    def call_sites_of(self, symbol_id: str) -> list[Edge]:
+        """
+        Incoming resolved `calls` edges themselves — unlike `callers_of`,
+        these keep the line of each call, so a reviewer can be pointed at
+        the exact call site rather than just the calling function.
+        """
+        return [e for e in self._incoming.get(symbol_id, []) if e.kind == "calls"]
+
+    def calls_by_name(self, name: str) -> list[Edge]:
+        """
+        Every `calls` edge whose callee is spelled `name`, resolved or not.
+
+        Looser than `call_sites_of` on purpose: tests routinely call
+        functions whose names are ambiguous repository-wide, so their
+        edges never resolve. When the question is "is there a test that
+        mentions this?", a name match is the useful signal — the caller
+        must treat it as a hint, not a proven link.
+        """
+        return list(self._calls_by_target_name.get(name, []))
 
     def imports_of_file(self, file_path: str) -> list[Edge]:
         return [e for e in self.edges if e.kind == "imports" and e.file_path == file_path]

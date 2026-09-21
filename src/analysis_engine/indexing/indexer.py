@@ -49,7 +49,9 @@ class CodeIndexer:
         files_failed = 0
 
         for path in sorted(workspace_path.rglob("*")):
-            if not path.is_file():
+            # A symlink can point anywhere on the host (/etc/passwd, another
+            # job's workspace). What's in the repository is what gets indexed.
+            if path.is_symlink() or not path.is_file():
                 continue
             if any(part in _IGNORED_DIR_NAMES for part in path.parts):
                 continue
