@@ -1,9 +1,15 @@
 # Analysis Engine — Agent Architecture
 
-> **Status:** Phases 0–2 are built: diff plumbing (`diffing/`), retrieval
+> **Status:** Phases 0–3 are built: diff plumbing (`diffing/`), retrieval
 > tools (`retrieval/`), the context pack (`context/`), the agent runtime
-> and Reviewer (`agents/`), and the review stage (`review/`). Not built
-> yet: the evaluation harness, Verifier, business rules and feedback.
+> and Reviewer (`agents/`), the review stage (`review/`) and the
+> evaluation harness (`evaluation/`). Not built yet: Verifier, business
+> rules, feedback.
+>
+> **Evaluation baseline (18 PRs, `gpt-5.6-luna`):** 12/12 planted bugs
+> found, every reported issue real, no false alarms on clean PRs, $0.0006
+> per PR. The set is still too easy to separate good from great; see
+> `evaluation/README.md`.
 >
 > **First real reviews (2026-09-21, `gpt-5.6-luna`):** 1 round, no tool
 > calls, about 2,400 input tokens, 9 seconds. $0.00116 cold, then
@@ -739,7 +745,7 @@ visible to the dashboard.
 | 0 ✅ | **Diff plumbing:** new job fields, DiffExtractor, ChangeMapper, `on_changed_line` on findings, changed symbols in the result | No | Unit tests on real git fixtures; "In this PR" filter works end to end |
 | 1 ✅ | **Retrieval tools + context pack** | No | Every tool has limit, path-escape and error tests; context packs for `dummy-test-project` PRs stay within limits |
 | 2 ✅ | **Runtime + Reviewer:** provider adapter, agent loop, budgets, trace, schema validation, orchestrator changes, `agent_reviews` table | Yes | A real PR produces a summary, linter triage and candidates. Invalid evidence is rejected by code. A failed review leaves the linter result intact. |
-| 3 | **Evaluation harness:** 20+ cases including clean PRs | Yes | Baseline precision/recall recorded for the Reviewer alone |
+| 3 ✅ | **Evaluation harness:** 18 cases including clean PRs (more, harder ones next) | Yes | Baseline precision/recall recorded for the Reviewer alone |
 | 4 | **Verifier + Reporter** | Yes | Precision improves over the phase 3 baseline, recall drops by no more than 5 points |
 | 5 | **Business rules:** rules file, database rules, rule API, rule checks in the Reviewer, Rule Miner | Yes | Business-rule eval cases pass; suggested rules need acceptance |
 | 6 | **Feedback + cost reporting:** feedback endpoint and table, stats in the API | No | Feedback stored per fingerprint; cost per review visible |
