@@ -4,6 +4,7 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
 
+from .agent_review import AgentReview
 from .change_set import PullRequestChanges
 from .finding import Finding
 from .metrics import AnalysisMetrics, FileStatistic, RuleStatistic
@@ -59,6 +60,10 @@ class AnalysisResult(BaseModel):
     # with status "unavailable" and a reason when the diff couldn't be
     # worked out.
     changes: PullRequestChanges | None = None
+
+    # The AI review, stored in its own table (agent_reviews) and attached
+    # when a result is read. None when no review was attempted.
+    review: AgentReview | None = None
 
     started_at: datetime
     completed_at: datetime | None = None

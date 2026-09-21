@@ -1,6 +1,7 @@
 import sys
 from pathlib import Path
 
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # src/analysis_engine/config.py -> src/analysis_engine -> src -> project root
@@ -79,6 +80,40 @@ class Settings(BaseSettings):
     pylint_bin_path: str = str(Path(sys.executable).parent / "pylint")
     radon_bin_path: str = str(Path(sys.executable).parent / "radon")
     bandit_bin_path: str = str(Path(sys.executable).parent / "bandit")
+
+    # -------------------------------------------------------------------
+    # AI review (docs/agent-architecture.md). Without an API key the review
+    # stage is skipped and linter analysis runs exactly as before.
+    # -------------------------------------------------------------------
+
+    # SecretStr so the key never appears in a repr, a log line or an
+    # exception message by accident.
+    openai_api_key: SecretStr | None = None
+    agent_review_enabled: bool = True
+
+    # Cheapest model first; upgrade only when the evaluation harness shows
+    # it falls short (docs/agent-architecture.md §6.1).
+    reviewer_model: str = "gpt-5.6-luna"
+    # Reasoning tokens are billed as output (the most expensive kind), so
+    # effort is kept low. Empty string = don't send the parameter at all,
+    # for models that don't support it.
+    reviewer_reasoning_effort: str = "low"
+
+    # Hard limits per review. Whichever is hit first ends the review with
+    # what it has so far.
+    reviewer_max_rounds: int = 8
+    reviewer_max_output_tokens: int = 8_000
+    reviewer_max_seconds: float = 90.0
+    review_max_cost_usd: float = 0.10
+
+    # PRs above either size are skipped: too big to review well, and the
+    # cost would scale with them.
+    review_max_files: int = 60
+    review_max_changed_lines: int = 3_000
+
+    @property
+    def agent_review_available(self) -> bool:
+        return self.agent_review_enabled and self.openai_api_key is not None
 
 
 settings = Settings()

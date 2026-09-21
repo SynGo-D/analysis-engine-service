@@ -10,7 +10,9 @@ from .consumers.pr_queue_consumer import PRQueueConsumer
 from .infrastructure.database import connect_database
 from .infrastructure.rabbitmq import connect_rabbitmq, create_channel
 from .infrastructure.schema import ensure_schema
+from .repositories.agent_review_repository import AgentReviewRepository
 from .repositories.analysis_result_repository import AnalysisResultRepository
+from .review import ReviewOrchestrator, build_default_provider
 from .api.health import router as health_router
 from .api.analysis import router as analysis_router
 
@@ -35,8 +37,16 @@ async def lifespan(app: FastAPI):
     app.state.rabbitmq_connection = await connect_rabbitmq()
     app.state.rabbitmq_channel = await create_channel(app.state.rabbitmq_connection)
 
-    orchestrator = AnalysisOrchestrator()
-    consumer = PRQueueConsumer(orchestrator, app.state.analysis_result_repository)
+    # AI review only when a provider is configured (OPENAI_API_KEY); without
+    # one, reviews are recorded as skipped/"disabled" and linting is unchanged.
+    provider = build_default_provider()
+    logging.getLogger(__name__).info(
+        "AI review: %s", f"enabled ({settings.reviewer_model})" if provider else "disabled (no OPENAI_API_KEY)"
+    )
+    orchestrator = AnalysisOrchestrator(review_orchestrator=ReviewOrchestrator(provider))
+    consumer = PRQueueConsumer(
+        orchestrator, app.state.analysis_result_repository, AgentReviewRepository(app.state.db_pool)
+    )
     await consumer.start(app.state.rabbitmq_channel)
 
     yield

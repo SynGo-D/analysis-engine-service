@@ -87,6 +87,28 @@ ALTER TABLE findings ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{
 
 CREATE INDEX IF NOT EXISTS idx_findings_result
     ON findings (result_id);
+
+-- One AI review per analysis result (see domain/agent_review.py). The
+-- review is stored whole as JSONB: it's written and read as a unit, never
+-- queried field by field. status and cost are columns too, for operations
+-- ("how many reviews failed today", "what did reviews cost this month")
+-- without unpacking JSON.
+CREATE TABLE IF NOT EXISTS agent_reviews (
+    review_id             UUID PRIMARY KEY,
+    result_id             UUID NOT NULL UNIQUE
+        REFERENCES analysis_results (result_id) ON DELETE CASCADE,
+    repository            TEXT NOT NULL,
+    pull_request_number   INTEGER NOT NULL,
+    status                VARCHAR(20) NOT NULL
+        CHECK (status IN ('pending', 'running', 'completed', 'failed', 'skipped')),
+    cost_usd              NUMERIC(12, 6),
+    review                JSONB NOT NULL,
+    created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_reviews_repo
+    ON agent_reviews (repository, pull_request_number, created_at DESC);
 """
 
 
