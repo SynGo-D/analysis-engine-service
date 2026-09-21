@@ -2,6 +2,7 @@ import json
 
 import asyncpg
 
+from .agent_review_repository import AgentReviewRepository
 from ..domain import (
     AnalysisMetrics,
     AnalysisResult,
@@ -27,6 +28,9 @@ class AnalysisResultRepository:
 
     def __init__(self, pool: asyncpg.Pool):
         self._pool = pool
+        # Reviews live in their own table; results are returned with their
+        # review attached so the API response carries both.
+        self._reviews = AgentReviewRepository(pool)
 
     async def save(self, result: AnalysisResult) -> None:
         async with self._pool.acquire() as conn:
@@ -124,6 +128,9 @@ class AnalysisResultRepository:
                 findings = [self._map_finding(f) for f in finding_rows]
                 results.append(self._map_result(row, findings=findings))
 
+        reviews = await self._reviews.get_for_results([r.result_id for r in results])
+        for result in results:
+            result.review = reviews.get(result.result_id)
         return results
 
     async def get_latest_for_pull_request(
@@ -151,7 +158,9 @@ class AnalysisResultRepository:
             )
 
         findings = [self._map_finding(row) for row in finding_rows]
-        return self._map_result(result_row, findings=findings)
+        result = self._map_result(result_row, findings=findings)
+        result.review = (await self._reviews.get_for_results([result.result_id])).get(result.result_id)
+        return result
 
     # -------------------------------------------------------------------
     # Private helpers

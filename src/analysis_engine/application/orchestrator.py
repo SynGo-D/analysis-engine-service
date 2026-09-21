@@ -1,14 +1,17 @@
 import asyncio
 import logging
 from datetime import datetime, timezone
+from typing import Awaitable, Callable
 
 from .finding_normalizer import FindingNormalizer
 from ..analyzers import Analyzer
 from ..diffing import DiffExtractor, changed_symbols, mark_findings
-from ..domain import AnalysisJob, AnalysisResult, Finding, PullRequestChanges, PythonAnalysisResult
+from ..domain import AgentReview, AnalysisJob, AnalysisResult, Finding, PullRequestChanges, PythonAnalysisResult
+from ..domain.code_index import RepoIndex
 from ..factories import AnalyzerFactory, detect_languages
 from ..indexing import CodeIndexer
 from ..metrics import calculate_file_statistics, calculate_metrics, calculate_rule_statistics, scan_js_ts_files
+from ..review import ReviewOrchestrator
 from ..workspace import WorkspaceManager
 
 logger = logging.getLogger(__name__)
@@ -23,8 +26,10 @@ class AnalysisOrchestrator:
           -> run ESLint/Python analyzers  (concurrently with: work out
              what the PR changed, then which symbols that touches)
           -> normalize findings -> mark findings on changed lines
-          -> calculate metrics -> return result (persistence/publish
-          happen in the caller)
+          -> calculate metrics
+          -> hand the result to the caller to save   (Stage 1 ends)
+          -> AI review, while the checkout still exists (Stage 2)
+          -> return the result, with the review attached
 
     This is the only place that sequence is encoded (Pipeline/Command
     Pattern) — the consumer just calls `run()` and turns the outcome into
@@ -41,14 +46,29 @@ class AnalysisOrchestrator:
         finding_normalizer: FindingNormalizer | None = None,
         diff_extractor: DiffExtractor | None = None,
         code_indexer: CodeIndexer | None = None,
+        review_orchestrator: ReviewOrchestrator | None = None,
     ):
         self._workspace_manager = workspace_manager or WorkspaceManager()
         self._analyzer_factory = analyzer_factory or AnalyzerFactory()
         self._finding_normalizer = finding_normalizer or FindingNormalizer()
         self._diff_extractor = diff_extractor or DiffExtractor()
         self._code_indexer = code_indexer or CodeIndexer()
+        # None = no AI review stage at all (tests, or a deployment without it).
+        self._review_orchestrator = review_orchestrator
 
-    async def run(self, job: AnalysisJob) -> AnalysisResult:
+    async def run(
+        self,
+        job: AnalysisJob,
+        on_result: Callable[[AnalysisResult], Awaitable[None]] | None = None,
+        on_review: Callable[[AgentReview], Awaitable[None]] | None = None,
+    ) -> AnalysisResult:
+        """
+        `on_result` is called with the linter result as soon as it exists,
+        *before* the AI review starts, so it can be saved and shown while
+        the review runs (principle 5: the review can fail or take a
+        minute; the linter result must not wait for it). `on_review` is
+        called when the review starts and again when it ends.
+        """
         started_at = datetime.now(timezone.utc)
 
         async with self._workspace_manager.prepare(job) as workspace:
@@ -66,7 +86,7 @@ class AnalysisOrchestrator:
             # alongside them: it only fetches into .git, which no analyzer
             # reads, and its network round trip would otherwise add
             # straight to the job's duration.
-            results, changes = await asyncio.gather(
+            results, (changes, index) = await asyncio.gather(
                 asyncio.gather(
                     *(analyzer.analyze(workspace, job) for analyzer in analyzers),
                     return_exceptions=True,
@@ -79,6 +99,19 @@ class AnalysisOrchestrator:
             # needs each file's line count independent of ESLint's output.
             file_lines = scan_js_ts_files(workspace.path)
 
+            result = self._build_result(job, analyzers, results, changes, file_lines, started_at)
+            if on_result is not None:
+                await on_result(result)
+
+            # Stage 2 runs inside the workspace block on purpose: the
+            # Reviewer's tools read the checkout, which is deleted as soon
+            # as this block exits.
+            if self._review_orchestrator is not None and result.status == "completed":
+                result.review = await self._run_review(workspace.path, job, result, index, on_review)
+
+        return result
+
+    def _build_result(self, job, analyzers, results, changes, file_lines, started_at) -> AnalysisResult:
         raw_findings, failed_tools = self._collect_results(analyzers, results, job)
 
         # If every selected analyzer failed, the job itself failed — a
@@ -112,7 +145,17 @@ class AnalysisOrchestrator:
             error_message="; ".join(failed_tools) if all_failed else None,
         )
 
-    async def _extract_changes(self, workspace_path, job: AnalysisJob) -> PullRequestChanges:
+    async def _run_review(self, workspace_path, job, result, index, on_review) -> AgentReview:
+        review = self._review_orchestrator.pending(job, result)
+        if on_review is not None and self._review_orchestrator.skip_reason(result.changes) is None:
+            await on_review(review)  # lets a client show "AI review in progress"
+
+        review = await self._review_orchestrator.run(workspace_path, job, result, index, review)
+        if on_review is not None:
+            await on_review(review)
+        return review
+
+    async def _extract_changes(self, workspace_path, job: AnalysisJob) -> tuple[PullRequestChanges, RepoIndex | None]:
         """
         What the PR changed, plus the symbols those changes touch.
 
@@ -124,7 +167,7 @@ class AnalysisOrchestrator:
             changes = await self._diff_extractor.extract(workspace_path, job)
         except Exception:
             logger.exception("[job:%s] computing PR changes failed", job.job_id)
-            return PullRequestChanges(status="unavailable", unavailable_reason="error")
+            return PullRequestChanges(status="unavailable", unavailable_reason="error"), None
 
         logger.info(
             "[job:%s] PR changes: %s%s", job.job_id, changes.status,
@@ -132,6 +175,7 @@ class AnalysisOrchestrator:
             f" ({changes.files_changed} files, +{changes.lines_added}/-{changes.lines_removed})",
         )
 
+        index: RepoIndex | None = None
         if changes.status == "available" and changes.change_set is not None and changes.change_set.files:
             try:
                 # tree-sitter parsing is CPU-bound and synchronous; off the
@@ -141,7 +185,7 @@ class AnalysisOrchestrator:
             except Exception:
                 logger.exception("[job:%s] indexing for changed symbols failed", job.job_id)
 
-        return changes
+        return changes, index
 
     def _collect_results(
         self,

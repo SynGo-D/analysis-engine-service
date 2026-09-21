@@ -1,5 +1,16 @@
 from .analysis_job import AnalysisJob, Provider
 from .finding import Finding, Severity, FindingCategory
+from .agent_review import (
+    AgentFinding,
+    AgentReview,
+    DroppedCandidate,
+    DroppedTriage,
+    ReviewEvidence,
+    ReviewSkipReason,
+    ReviewStats,
+    ReviewStatus,
+    TriagedLinterFinding,
+)
 from .analysis_result import AnalysisResult, AnalysisStatus
 from .change_set import (
     ChangeSet,
@@ -46,6 +57,15 @@ __all__ = [
     "FindingCategory",
     "AnalysisResult",
     "AnalysisStatus",
+    "AgentFinding",
+    "AgentReview",
+    "DroppedCandidate",
+    "DroppedTriage",
+    "ReviewEvidence",
+    "ReviewSkipReason",
+    "ReviewStats",
+    "ReviewStatus",
+    "TriagedLinterFinding",
     "ChangeSet",
     "ChangeStatus",
     "ChangedFile",

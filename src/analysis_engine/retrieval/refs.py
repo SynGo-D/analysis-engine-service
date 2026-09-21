@@ -14,7 +14,9 @@ def finding_ref(finding: Finding) -> str:
 
 def resolve_finding_ref(ref: str, findings: list[Finding]) -> Finding | None:
     """The finding an agent's short reference points to, or None if it matches zero or several."""
-    ref = ref.strip().lower()
+    # Models copy the reference the way it's displayed, "[d3c800065e]",
+    # brackets included. Accept that rather than silently reject it.
+    ref = ref.strip().strip("[]").strip().lower()
     if len(ref) < FINDING_REF_LENGTH:
         return None
     matches = [f for f in findings if f.fingerprint.startswith(ref)]

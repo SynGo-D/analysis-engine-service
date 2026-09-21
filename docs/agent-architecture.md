@@ -1,9 +1,14 @@
 # Analysis Engine — Agent Architecture
 
-> **Status:** Phases 0–1 are built: diff plumbing (`diffing/`), retrieval
-> tools (`retrieval/`) and the context pack (`context/`). Linters, metrics
-> and the repository index were already built. The agents, rule store
-> and review stage are not built yet.
+> **Status:** Phases 0–2 are built: diff plumbing (`diffing/`), retrieval
+> tools (`retrieval/`), the context pack (`context/`), the agent runtime
+> and Reviewer (`agents/`), and the review stage (`review/`). Not built
+> yet: the evaluation harness, Verifier, business rules and feedback.
+>
+> **First real reviews (2026-09-21, `gpt-5.6-luna`):** 1 round, no tool
+> calls, about 2,400 input tokens, 9 seconds. $0.00116 cold, then
+> **$0.00073** once the prompt cache was warm (2,381 of 2,384 input tokens
+> cached).
 >
 > **Provider:** OpenAI, chosen with cost as a priority (§6.1).
 >
@@ -271,11 +276,12 @@ stop early if any budget is exceeded
 
 | Budget | Reviewer | Verifier (per candidate) |
 |---|---|---|
-| Tool-call rounds | 12 | 6 |
+| Tool-call rounds | 8 | 6 |
 | Output tokens | 8,000 | 1,500 |
 | Wall-clock time | 90 s | 30 s |
 
-There is also a **per-review cost cap** (default $0.50). When the
+There is also a **per-review cost cap** (default $0.10: about 100× what a
+typical review costs on Luna, so it only ever stops runaways). When the
 Reviewer runs out of budget it has to return what it has so far. A
 Verifier that times out counts as **drop**: an unverified issue is never
 reported.
@@ -732,7 +738,7 @@ visible to the dashboard.
 |---|---|---|---|
 | 0 ✅ | **Diff plumbing:** new job fields, DiffExtractor, ChangeMapper, `on_changed_line` on findings, changed symbols in the result | No | Unit tests on real git fixtures; "In this PR" filter works end to end |
 | 1 ✅ | **Retrieval tools + context pack** | No | Every tool has limit, path-escape and error tests; context packs for `dummy-test-project` PRs stay within limits |
-| 2 | **Runtime + Reviewer:** provider adapter, agent loop, budgets, trace, schema validation, orchestrator changes, `agent_reviews` table | Yes | A real PR produces a summary, linter triage and candidates. Invalid evidence is rejected by code. A failed review leaves the linter result intact. |
+| 2 ✅ | **Runtime + Reviewer:** provider adapter, agent loop, budgets, trace, schema validation, orchestrator changes, `agent_reviews` table | Yes | A real PR produces a summary, linter triage and candidates. Invalid evidence is rejected by code. A failed review leaves the linter result intact. |
 | 3 | **Evaluation harness:** 20+ cases including clean PRs | Yes | Baseline precision/recall recorded for the Reviewer alone |
 | 4 | **Verifier + Reporter** | Yes | Precision improves over the phase 3 baseline, recall drops by no more than 5 points |
 | 5 | **Business rules:** rules file, database rules, rule API, rule checks in the Reviewer, Rule Miner | Yes | Business-rule eval cases pass; suggested rules need acceptance |

@@ -9,6 +9,7 @@ from ..application.orchestrator import AnalysisOrchestrator
 from ..config import settings
 from ..domain import AnalysisJob, AnalysisResult
 from ..messaging.topology import PR_QUEUE_NAME
+from ..repositories.agent_review_repository import AgentReviewRepository
 from ..repositories.analysis_result_repository import AnalysisResultRepository
 
 logger = logging.getLogger(__name__)
@@ -24,9 +25,15 @@ class PRQueueConsumer:
     persistence logic belongs here.
     """
 
-    def __init__(self, orchestrator: AnalysisOrchestrator, repository: AnalysisResultRepository):
+    def __init__(
+        self,
+        orchestrator: AnalysisOrchestrator,
+        repository: AnalysisResultRepository,
+        review_repository: AgentReviewRepository | None = None,
+    ):
         self._orchestrator = orchestrator
         self._repository = repository
+        self._review_repository = review_repository
 
     async def start(self, channel: AbstractRobustChannel) -> None:
         # Bounds how many unacked jobs this worker holds at once — see
@@ -66,8 +73,14 @@ class PRQueueConsumer:
         )
 
         try:
-            result = await self._orchestrator.run(job)
-            await self._repository.save(result)
+            # The linter result is saved the moment it exists, before the
+            # AI review starts; the review is saved as "running" and then
+            # with its outcome. A review failure never loses the result.
+            result = await self._orchestrator.run(
+                job,
+                on_result=self._repository.save,
+                on_review=self._review_repository.save if self._review_repository else None,
+            )
             await message.ack()
             self._log_result(job, result)
 
