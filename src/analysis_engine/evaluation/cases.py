@@ -513,8 +513,12 @@ def login(users, username, password, check):
 '''},
 )
 
-ALL_CASES: tuple[Case, ...] = (
+BASIC_CASES: tuple[Case, ...] = (
     PY_PAGINATION, PY_DISCOUNT, PY_PERMISSION, PY_PATH_TRAVERSAL, PY_RETRY, PY_SWAPPED_ARGS, PY_CENTS,
     JS_SORT, JS_AWAIT, JS_XSS, JS_MONTH, JS_ROLE,
     CLEAN_RENAME, CLEAN_VALIDATION, CLEAN_FLOAT_DECOY, CLEAN_JS_REFACTOR, CLEAN_PAIRS_DECOY, CLEAN_LOGGING,
 )
+
+from .cases_hard import HARD_CASES  # noqa: E402  (kept in its own module for readability)
+
+ALL_CASES: tuple[Case, ...] = BASIC_CASES + HARD_CASES

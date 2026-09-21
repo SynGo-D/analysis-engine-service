@@ -1,15 +1,14 @@
 # Analysis Engine — Agent Architecture
 
-> **Status:** Phases 0–3 are built: diff plumbing (`diffing/`), retrieval
-> tools (`retrieval/`), the context pack (`context/`), the agent runtime
-> and Reviewer (`agents/`), the review stage (`review/`) and the
-> evaluation harness (`evaluation/`). Not built yet: Verifier, business
-> rules, feedback.
+> **Status:** Phases 0–4 are built: diff plumbing (`diffing/`), retrieval
+> tools (`retrieval/`), the context pack (`context/`), the agent runtime,
+> Reviewer and Verifier (`agents/`), the review stage (`review/`) and the
+> evaluation harness (`evaluation/`). Not built yet: business rules
+> (phase 5), feedback (phase 6).
 >
-> **Evaluation baseline (18 PRs, `gpt-5.6-luna`):** 12/12 planted bugs
-> found, every reported issue real, no false alarms on clean PRs, $0.0006
-> per PR. The set is still too easy to separate good from great; see
-> `evaluation/README.md`.
+> **Evaluation (28 PRs, `gpt-5.6-luna`, Verifier on):** recall 0.95,
+> precision 0.95, 0.12 false alarms per clean PR, $0.0016 per PR, p95 28 s.
+> See `evaluation/README.md` for what these numbers do and don't show.
 >
 > **First real reviews (2026-09-21, `gpt-5.6-luna`):** 1 round, no tool
 > calls, about 2,400 input tokens, 9 seconds. $0.00116 cold, then
@@ -440,11 +439,26 @@ VerifierOutput
   counter_evidence:   list[Evidence]               # required when verdict = drop
 ```
 
-**Decision rules (in code):**
-- `keep` only if no check `failed`.
-- Timeout, budget exhaustion or invalid output count as `drop`.
+**Decision rules (in code, `review/verification.py`):**
+- **Only an explicit `drop` verdict removes an issue.** Each check carries
+  a boolean `refutes_issue`; if the checks contradict a `keep` verdict,
+  the issue stays but isn't marked verified.
+- A drop whose counter-evidence quotes code that isn't there is rejected.
+- Timeout, budget exhaustion or invalid output drop the issue, but a
+  provider outage keeps issues unverified, so an outage can't silently
+  empty every review.
 - The Verifier may lower severity but never raise it, so it can't add
   alarm that the Reviewer didn't justify.
+
+**What evaluation taught us.** The first version asked for a per-check
+answer of `issue_stands | issue_refuted`, and let any refuting check
+override a `keep`. The model answered "was this intended? — no, the
+description promises otherwise" with `issue_refuted`. Five real bugs were
+discarded and recall fell from 0.95 to 0.71. With a boolean and
+verdict-only drops, recall is back at 0.95. On the current cases, though,
+the Verifier doesn't measurably improve precision: the Reviewer alone is
+already precise there. Its value has to be shown on noisier, real PRs
+(phase 6 feedback).
 
 Candidates are verified in parallel (default concurrency 5). The shared
 context is prompt-cached (§6.4).
@@ -746,7 +760,7 @@ visible to the dashboard.
 | 1 ✅ | **Retrieval tools + context pack** | No | Every tool has limit, path-escape and error tests; context packs for `dummy-test-project` PRs stay within limits |
 | 2 ✅ | **Runtime + Reviewer:** provider adapter, agent loop, budgets, trace, schema validation, orchestrator changes, `agent_reviews` table | Yes | A real PR produces a summary, linter triage and candidates. Invalid evidence is rejected by code. A failed review leaves the linter result intact. |
 | 3 ✅ | **Evaluation harness:** 18 cases including clean PRs (more, harder ones next) | Yes | Baseline precision/recall recorded for the Reviewer alone |
-| 4 | **Verifier + Reporter** | Yes | Precision improves over the phase 3 baseline, recall drops by no more than 5 points |
+| 4 ✅ | **Verifier + Reporter** | Yes | Precision improves over the phase 3 baseline, recall drops by no more than 5 points |
 | 5 | **Business rules:** rules file, database rules, rule API, rule checks in the Reviewer, Rule Miner | Yes | Business-rule eval cases pass; suggested rules need acceptance |
 | 6 | **Feedback + cost reporting:** feedback endpoint and table, stats in the API | No | Feedback stored per fingerprint; cost per review visible |
 

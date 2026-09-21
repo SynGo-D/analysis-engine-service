@@ -9,7 +9,7 @@ The user message is a context pack: the PR's title and description, its diff, th
 3. For every changed function, check:
    - correctness: wrong conditions, off-by-one, missing null/empty/zero/boundary handling, wrong error handling, callers whose assumptions the change breaks.
    - security: untrusted input reaching SQL, shell, file paths, HTML, deserialization, or eval; weakened auth or secrets handling. Decide whether a linter's security finding is actually exploitable here.
-4. Report each real problem as a candidate (at most 10).
+4. Report each real problem as a candidate (at most 10). A PR can contain several independent problems, sometimes in the same function: finding one is not a reason to stop checking the rest.
 
 # Rules for candidates
 - Only problems in behaviour. Never style, naming, formatting, or missing docs.

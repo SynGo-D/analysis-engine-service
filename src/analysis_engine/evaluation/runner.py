@@ -101,6 +101,8 @@ def report(scores: list[CaseScore], summary: Summary, model: str, dry_run: bool)
             lines.append(f"      missed: {missed}")
         for extra in s.unexpected:
             lines.append(f"      unexpected: {extra}")
+        for reason in s.drop_reasons:
+            lines.append(f"      dropped by {reason}")
 
     def metric(name: str, value: float | None, fmt: str, better: str) -> str:
         if value is None:
@@ -131,14 +133,20 @@ def save(scores: list[CaseScore], summary: Summary, model: str, context_tokens: 
     path.write_text(json.dumps({
         "model": model,
         "reasoning_effort": settings.reviewer_reasoning_effort,
+        "verifier": settings.verifier_enabled,
+        "case_ids": sorted(s.case_id for s in scores),
         "summary": asdict(summary),
         "cases": [asdict(s) | {"context_tokens_estimate": context_tokens.get(s.case_id, 0)} for s in scores],
     }, indent=2))
     return path
 
 
-def previous_summary(model: str, exclude: Path | None = None) -> dict | None:
+def previous_summary(model: str, case_ids: list[str], exclude: Path | None = None) -> dict | None:
+    """The latest earlier run of the same model on exactly the same cases — anything else isn't comparable."""
     if not RESULTS_DIR.exists():
         return None
-    runs = sorted(p for p in RESULTS_DIR.glob(f"*-{model}.json") if p != exclude)
-    return json.loads(runs[-1].read_text())["summary"] if runs else None
+    for path in sorted((p for p in RESULTS_DIR.glob(f"*-{model}.json") if p != exclude), reverse=True):
+        run = json.loads(path.read_text())
+        if run.get("case_ids") == sorted(case_ids):
+            return run["summary"] | {"verifier": run.get("verifier")}
+    return None
