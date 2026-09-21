@@ -1,9 +1,9 @@
 # Analysis Engine — Agent Architecture
 
-> **Status:** Phase 0 (diff plumbing) is built: see `diffing/`. Linters,
-> metrics and the repository index were already built. Everything
-> described here as an agent, tool, rule store or review stage is not
-> built yet.
+> **Status:** Phases 0–1 are built: diff plumbing (`diffing/`), retrieval
+> tools (`retrieval/`) and the context pack (`context/`). Linters, metrics
+> and the repository index were already built. The agents, rule store
+> and review stage are not built yet.
 >
 > **Provider:** OpenAI, chosen with cost as a priority (§6.1).
 >
@@ -198,7 +198,7 @@ limit, because a bloated context makes an agent worse, not better.
 |---|---|---|
 | PR | title, description, branch names, totals | 4,000 chars |
 | Diff | unified diff with 3 lines of context | 60,000 chars; larger files are reduced to their changed symbols |
-| Changed symbols | full source of each changed function/method | 40 symbols, 200 lines each |
+| Edited symbols | full source of each function/method the PR *edited*; brand-new ones are already whole in the diff | 40 symbols, 200 lines each, 35,000 chars |
 | Callers | name, file, line and call line of each changed symbol's callers | 10 per symbol |
 | Linter findings | findings on changed lines, grouped by file | 60 findings, highest severity first |
 | Business rules | applicable rules, full text | 30 rules |
@@ -305,7 +305,7 @@ limited to the checked-out workspace, and every result is size-bounded.
 | `callees_of` | `symbol_id` | What it calls (resolved and unresolved names) | 50 results |
 | `search_code` | `pattern` (literal text, not regex), `path_glob?` | Matching lines with file:line | 50 matches |
 | `get_linter_findings` | `path?, rule_id?, changed_only?` | Findings in compact form | 50 results |
-| `get_rule` | `rule_id` | Full rule text | — |
+| `get_rule` | `rule_id` | Full rule text | — (added in phase 5) |
 | `list_tests_for` | `symbol_id` | Test functions that reference the symbol by name | 20 results |
 
 **Rules for every tool:**
@@ -731,7 +731,7 @@ visible to the dashboard.
 | # | Phase | AI? | Done when |
 |---|---|---|---|
 | 0 ✅ | **Diff plumbing:** new job fields, DiffExtractor, ChangeMapper, `on_changed_line` on findings, changed symbols in the result | No | Unit tests on real git fixtures; "In this PR" filter works end to end |
-| 1 | **Retrieval tools + context pack** | No | Every tool has limit, path-escape and error tests; context packs for `dummy-test-project` PRs stay within limits |
+| 1 ✅ | **Retrieval tools + context pack** | No | Every tool has limit, path-escape and error tests; context packs for `dummy-test-project` PRs stay within limits |
 | 2 | **Runtime + Reviewer:** provider adapter, agent loop, budgets, trace, schema validation, orchestrator changes, `agent_reviews` table | Yes | A real PR produces a summary, linter triage and candidates. Invalid evidence is rejected by code. A failed review leaves the linter result intact. |
 | 3 | **Evaluation harness:** 20+ cases including clean PRs | Yes | Baseline precision/recall recorded for the Reviewer alone |
 | 4 | **Verifier + Reporter** | Yes | Precision improves over the phase 3 baseline, recall drops by no more than 5 points |
