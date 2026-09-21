@@ -4,7 +4,7 @@ from pathlib import Path, PurePosixPath
 from ..domain import Finding
 from ..domain.code_index import RepoIndex, Symbol
 from ..diffing import ON_CHANGED_LINE, is_generated
-from .path_guard import PathNotAllowed, resolve_in_workspace
+from .path_guard import PathNotAllowed, is_secret_file, resolve_in_workspace
 from .redaction import redact
 from .refs import finding_ref
 
@@ -48,11 +48,13 @@ class RetrievalTools:
     `search_code` runs `git grep` on the local checkout only.
     """
 
-    def __init__(self, workspace: Path, index: RepoIndex, findings: list[Finding], timeout: float = 10.0):
+    def __init__(self, workspace: Path, index: RepoIndex, findings: list[Finding], timeout: float = 10.0,
+                 rules=None):
         self._workspace = workspace
         self._index = index
         self._findings = findings
         self._timeout = timeout
+        self._rules = rules  # rules.RuleSet | None — not imported, to keep retrieval free of rules/
 
     # -------------------------------------------------------------------
     # Files
@@ -201,7 +203,7 @@ class RetrievalTools:
 
         matches = [
             line for line in stdout.decode("utf-8", errors="replace").splitlines()
-            if not is_generated(line.split(":", 1)[0])
+            if not is_generated(line.split(":", 1)[0]) and not is_secret_file(line.split(":", 1)[0])
         ]
         if not matches:
             return f"No matches for '{text}' outside generated files."
@@ -235,6 +237,17 @@ class RetrievalTools:
         return "\n".join(format_finding(f) for f in shown) + _more(len(selected), len(shown))
 
     # -------------------------------------------------------------------
+    # Business rules
+    # -------------------------------------------------------------------
+
+    def get_rule(self, rule_id: str) -> str:
+        rule = self._rules.get(rule_id) if self._rules else None
+        if rule is None:
+            known = ", ".join(r.rule_id for r in self._rules.rules[:30]) if self._rules and self._rules.rules else "none"
+            raise ToolError(f"No rule '{rule_id}'. Rules in force: {known}.")
+        return format_rule(rule)
+
+    # -------------------------------------------------------------------
 
     def _symbol(self, symbol_id: str) -> Symbol:
         symbol = self._index.get(symbol_id)
@@ -263,6 +276,15 @@ def format_finding(finding: Finding) -> str:
     """One compact line per finding — shared with the context pack so both read the same."""
     location = f"{finding.file_path}:{finding.line}" if finding.line else finding.file_path
     return f"[{finding_ref(finding)}] {finding.severity} {finding.tool}/{finding.rule_id} {location} — {_clip(finding.message)}"
+
+
+def format_rule(rule) -> str:
+    """One rule as agents see it — shared with the context pack."""
+    scope = ", ".join(rule.applies_to) if rule.applies_to else "all files"
+    text = f"[{rule.rule_id}] ({rule.severity}) {rule.rule} — applies to: {scope}"
+    if rule.rationale:
+        text += f"\n    why: {rule.rationale}"
+    return text
 
 
 def is_test_file(path: str) -> bool:

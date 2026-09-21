@@ -38,6 +38,8 @@ dependencies = [
     # analyzers: the provider adapter parses this SDK's response types,
     # which a major version can change.
     "openai==3.16.2",
+    # Business rules files (.codepulse/rules.yml), parsed with safe_load only.
+    "pyyaml==6.0.3",
 ]
 
 [project.optional-dependencies]

@@ -7,7 +7,16 @@ from ..config import settings
 from ..diffing import ON_CHANGED_LINE
 from ..domain import AnalysisJob, ChangedSymbol, Finding, PullRequestChanges
 from ..domain.code_index import RepoIndex
-from ..retrieval import PathNotAllowed, format_finding, is_test_file, numbered_lines, redact, resolve_in_workspace
+from ..retrieval import (
+    PathNotAllowed,
+    is_secret_file,
+    format_finding,
+    format_rule,
+    is_test_file,
+    numbered_lines,
+    redact,
+    resolve_in_workspace,
+)
 from ..workspace import WorkspaceSecurityError, run_git_output
 
 # Roughly 4 characters per token for code and English — close enough to
@@ -39,6 +48,8 @@ class ContextLimits:
     findings_chars: int = 12_000
     max_findings: int = 60
     repo_map_chars: int = 2_000
+    rules_chars: int = 8_000
+    max_rules: int = 30
 
 
 class ContextSection(BaseModel):
@@ -93,12 +104,14 @@ class ContextPackBuilder:
         changes: PullRequestChanges,
         index: RepoIndex,
         findings: list[Finding],
+        rules=None,
     ) -> ContextPack:
         if changes.change_set is None:
             raise ValueError("A context pack needs the pull request's change set.")
 
         sections = [
             self._pull_request(job, changes),
+            self._rules(rules, changes),
             await self._diff(workspace, changes),
             self._changed_symbols(workspace, changes),
             self._callers(index, changes.changed_symbols),
@@ -125,9 +138,39 @@ class ContextPackBuilder:
         body, cut = _cut(redact("\n".join(lines)), self._limits.pr_chars)
         return ContextSection(title="Pull request", body=body, omitted="Description truncated." if cut else None)
 
+    def _rules(self, rules, changes: PullRequestChanges) -> ContextSection | None:
+        """
+        The business rules whose scope covers a file this PR changes. Placed
+        right after the PR's intent: they're the standard the change is
+        judged against, and the section generic reviewers never have.
+        """
+        if rules is None:
+            return None
+        applicable = rules.applicable(changes.change_set)
+        notes = []
+        if rules.modified_by_pr:
+            notes.append("This PR edits the rules file. The rules below are the target branch's, "
+                         "which is what the PR is reviewed against.")
+        if not applicable:
+            return None if not notes else ContextSection(title="Business rules", body="None apply to the changed files.",
+                                                         omitted=notes[0])
+
+        lines, used = [], 0
+        for rule in applicable[: self._limits.max_rules]:
+            text = format_rule(rule)
+            if used + len(text) > self._limits.rules_chars:
+                break
+            lines.append(text)
+            used += len(text) + 1
+        if len(lines) < len(applicable):
+            notes.append(f"{len(applicable) - len(lines)} more applicable rule(s) not shown. Use get_rule.")
+        return ContextSection(title="Business rules", body=redact("\n".join(lines)),
+                              omitted=" ".join(notes) or None)
+
     async def _diff(self, workspace: Path, changes: PullRequestChanges) -> ContextSection:
         change_set = changes.change_set
-        exclude = [f":(exclude,literal){path}" for path in change_set.excluded_files]
+        secret = [f.path for f in change_set.files if is_secret_file(f.path)]
+        exclude = [f":(exclude,literal){path}" for path in [*change_set.excluded_files, *secret]]
         try:
             _code, output = await run_git_output(
                 ["-c", "core.quotePath=false", "diff", "--unified=3", "--no-color", "--no-ext-diff",
@@ -153,9 +196,12 @@ class ContextPackBuilder:
             included.append(text)
             used += len(text)
 
-        note = None
+        notes = []
         if omitted:
-            note = f"Diff not shown for {len(omitted)} file(s): {', '.join(omitted[:15])}. Use read_file."
+            notes.append(f"Diff not shown for {len(omitted)} file(s): {', '.join(omitted[:15])}. Use read_file.")
+        if secret:
+            notes.append(f"Credential files changed but never shown: {', '.join(secret[:10])}.")
+        note = " ".join(notes) or None
         return ContextSection(title="Diff", body=redact("\n".join(included)) or "(no textual changes)", omitted=note)
 
     def _changed_symbols(self, workspace: Path, changes: PullRequestChanges) -> ContextSection | None:

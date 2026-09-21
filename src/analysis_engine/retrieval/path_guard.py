@@ -1,4 +1,24 @@
+import re
 from pathlib import Path, PurePosixPath
+
+# Files that hold credentials by convention. Never shown to an agent in
+# any form: whatever reaches a prompt goes to the model provider, and
+# redaction only recognises credentials with a known shape (a plain
+# DB_PASSWORD=hunter2 in a committed .env would get through).
+_SECRET_FILE = re.compile(
+    r"(^|/)("
+    r"\.env(\..*)?|\.envrc|\.npmrc|\.pypirc|\.netrc|\.git-credentials|"
+    r"id_(rsa|dsa|ecdsa|ed25519)(\.pub)?|"
+    r".*\.(pem|key|p12|pfx|jks|keystore|kdbx)|"
+    r"credentials(\.json)?|secrets?\.(json|ya?ml|toml)|service-account.*\.json"
+    r")$",
+    re.IGNORECASE,
+)
+
+
+def is_secret_file(path: str) -> bool:
+    """True for files that conventionally hold credentials (.env, private keys, credential files)."""
+    return bool(_SECRET_FILE.search(path.replace("\\", "/")))
 
 
 class PathNotAllowed(ValueError):
@@ -36,5 +56,7 @@ def resolve_in_workspace(workspace: Path, relative_path: str) -> Path:
     inside = resolved.relative_to(root).parts
     if inside and inside[0] == ".git":
         raise PathNotAllowed("The .git directory is not readable.")
+    if is_secret_file(posix.as_posix()) or is_secret_file("/".join(inside)):
+        raise PathNotAllowed("Files that hold credentials are never shown.")
 
     return resolved

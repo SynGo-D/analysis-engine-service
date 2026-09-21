@@ -249,3 +249,27 @@ def test_finding_refs_are_short_and_resolve_back():
     assert resolve_finding_ref(ref, findings) is findings[0]
     assert resolve_finding_ref(ref[:5], findings) is None      # too short to trust
     assert resolve_finding_ref("0" * 10, findings) is None      # matches nothing
+
+
+@pytest.mark.parametrize("path", [".env", "config/.env.production", "deploy/server.pem", "keys/id_rsa",
+                                  "secrets.yaml", "gcp/service-account-prod.json", ".npmrc"])
+def test_credential_files_are_never_shown_to_an_agent(tools, path):
+    result = asyncio.run(ToolExecutor(tools).execute("read_file", {"path": path}))
+
+    assert result.startswith("Error: Files that hold credentials are never shown.")
+
+
+@pytest.mark.parametrize("path", ["src/environment.py", "docs/keys.md", "app/secret_santa.py", "env/config.py"])
+def test_ordinary_files_that_merely_look_similar_are_readable(path):
+    from analysis_engine.retrieval import is_secret_file
+
+    assert not is_secret_file(path)
+
+
+def test_search_never_returns_lines_from_credential_files(tmp_path):
+    repo = _repo(tmp_path)
+    (repo / ".env").write_text("DB_PASSWORD=hunter2hunter2\n")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True, capture_output=True)
+    tools = RetrievalTools(repo, CodeIndexer().build(repo), [])
+
+    assert "hunter2" not in asyncio.run(tools.search_code("DB_PASSWORD"))

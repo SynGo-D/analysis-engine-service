@@ -519,6 +519,7 @@ BASIC_CASES: tuple[Case, ...] = (
     CLEAN_RENAME, CLEAN_VALIDATION, CLEAN_FLOAT_DECOY, CLEAN_JS_REFACTOR, CLEAN_PAIRS_DECOY, CLEAN_LOGGING,
 )
 
-from .cases_hard import HARD_CASES  # noqa: E402  (kept in its own module for readability)
+from .cases_hard import HARD_CASES  # noqa: E402  (kept in their own modules for readability)
+from .cases_rules import RULE_CASES  # noqa: E402
 
-ALL_CASES: tuple[Case, ...] = BASIC_CASES + HARD_CASES
+ALL_CASES: tuple[Case, ...] = BASIC_CASES + HARD_CASES + RULE_CASES

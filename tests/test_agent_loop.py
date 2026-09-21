@@ -165,3 +165,17 @@ def test_unknown_model_price_reports_cost_as_unknown(executor):
     run = _run(FakeProvider([turn(call("submit", GOOD))]), executor, model="some-future-model")
 
     assert run.stop_reason == "submitted" and run.cost_usd is None
+
+
+def test_a_bad_answer_on_the_last_round_still_gets_its_repair(executor):
+    # Found in evaluation: a malformed final answer at the round limit used
+    # to end the run with nothing.
+    provider = FakeProvider([
+        turn(call("find_symbol", {"name": "f"})),
+        turn(call("submit", {"verdict": "x" * 50})),
+        turn(call("submit", GOOD)),
+    ])
+
+    run = _run(provider, executor, budget=AgentBudget(max_rounds=2, max_output_tokens=8_000, max_seconds=10, max_cost_usd=1))
+
+    assert run.stop_reason == "submitted" and run.rounds == 3

@@ -1,14 +1,15 @@
 # Analysis Engine — Agent Architecture
 
-> **Status:** Phases 0–4 are built: diff plumbing (`diffing/`), retrieval
+> **Status:** Phases 0–5 are built: diff plumbing (`diffing/`), retrieval
 > tools (`retrieval/`), the context pack (`context/`), the agent runtime,
-> Reviewer and Verifier (`agents/`), the review stage (`review/`) and the
-> evaluation harness (`evaluation/`). Not built yet: business rules
-> (phase 5), feedback (phase 6).
+> Reviewer, Verifier and Rule Miner (`agents/`), the review stage
+> (`review/`), business rules (`rules/`) and the evaluation harness
+> (`evaluation/`). Not built yet: feedback (phase 6).
 >
-> **Evaluation (28 PRs, `gpt-5.6-luna`, Verifier on):** recall 0.95,
-> precision 0.95, 0.12 false alarms per clean PR, $0.0016 per PR, p95 28 s.
-> See `evaluation/README.md` for what these numbers do and don't show.
+> **Evaluation (35 PRs including 7 business-rule PRs, `gpt-5.6-luna`):**
+> 25/25 planted bugs and rule violations found, $0.0014 per PR, p95 27 s.
+> See `evaluation/README.md` for the false-alarm picture and what these
+> numbers do and don't show.
 >
 > **First real reviews (2026-09-21, `gpt-5.6-luna`):** 1 round, no tool
 > calls, about 2,400 input tokens, 9 seconds. $0.00116 cold, then
@@ -551,7 +552,7 @@ Suggested but unaccepted rules are never used.
 ### 9.3 Safety
 
 The rules file comes from the pull request's own checkout, so a pull
-request can change the rules it's reviewed against. To prevent that,
+request could change the rules it's reviewed against. To prevent that,
 **rules are read from the target branch**, not the pull request's
 version. Rule changes take effect once merged. The Reviewer is still told
 if the pull request modifies `.codepulse/rules.yml`, so it can say so.
@@ -761,7 +762,7 @@ visible to the dashboard.
 | 2 ✅ | **Runtime + Reviewer:** provider adapter, agent loop, budgets, trace, schema validation, orchestrator changes, `agent_reviews` table | Yes | A real PR produces a summary, linter triage and candidates. Invalid evidence is rejected by code. A failed review leaves the linter result intact. |
 | 3 ✅ | **Evaluation harness:** 18 cases including clean PRs (more, harder ones next) | Yes | Baseline precision/recall recorded for the Reviewer alone |
 | 4 ✅ | **Verifier + Reporter** | Yes | Precision improves over the phase 3 baseline, recall drops by no more than 5 points |
-| 5 | **Business rules:** rules file, database rules, rule API, rule checks in the Reviewer, Rule Miner | Yes | Business-rule eval cases pass; suggested rules need acceptance |
+| 5 ✅ | **Business rules:** rules file, database rules, rule API, rule checks in the Reviewer, Rule Miner | Yes | Business-rule eval cases pass; suggested rules need acceptance |
 | 6 | **Feedback + cost reporting:** feedback endpoint and table, stats in the API | No | Feedback stored per fingerprint; cost per review visible |
 
 ## 16. Open decisions

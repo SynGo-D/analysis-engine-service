@@ -10,7 +10,10 @@ from ..context import ContextPackBuilder
 from ..domain import AgentReview, AnalysisJob, AnalysisResult, PullRequestChanges, ReviewStats
 from ..domain.agent_review import ReviewSkipReason
 from ..domain.code_index import RepoIndex
+from ..domain import RuleCheck
 from ..retrieval import RetrievalTools, ToolExecutor
+from ..rules import RuleSet, load_rules
+from ..rules.rule_set import RuleSource
 from .reporter import rank_and_cap, risk_level
 from .verification import verify_findings
 
@@ -27,9 +30,17 @@ class ReviewOrchestrator:
     result it belongs to is never affected (principle 5).
     """
 
-    def __init__(self, provider: LLMProvider | None = None, pack_builder: ContextPackBuilder | None = None):
+    def __init__(
+        self,
+        provider: LLMProvider | None = None,
+        pack_builder: ContextPackBuilder | None = None,
+        rule_source: RuleSource | None = None,
+    ):
         self._provider = provider
         self._pack_builder = pack_builder or ContextPackBuilder()
+        # Rules stored for the repository (dashboard / accepted suggestions).
+        # The repository's own rules file is always read, with or without it.
+        self._rule_source = rule_source
 
     def skip_reason(self, changes: PullRequestChanges | None) -> ReviewSkipReason | None:
         if self._provider is None:
@@ -80,8 +91,12 @@ class ReviewOrchestrator:
             return _finish(review, status="failed", error=f"{type(error).__name__}: {error}"[:500])
 
     async def _review(self, workspace, job, result, index, review, started) -> AgentReview:
-        pack = await self._pack_builder.build(workspace, job, result.changes, index, result.findings)
-        executor = ToolExecutor(RetrievalTools(workspace, index, result.findings))
+        change_set = result.changes.change_set
+        rules = await load_rules(workspace, job.repository, change_set, self._rule_source)
+        review.rule_errors = rules.errors
+
+        pack = await self._pack_builder.build(workspace, job, result.changes, index, result.findings, rules)
+        executor = ToolExecutor(RetrievalTools(workspace, index, result.findings, rules=rules))
 
         run = await run_reviewer(self._provider, pack.render(), executor)
 
@@ -103,14 +118,14 @@ class ReviewOrchestrator:
         if run.output is None:
             return _finish(review, status="failed", error=run.error or f"Reviewer stopped: {run.stop_reason}")
 
-        validated = validate_review(run.output, workspace, result.findings, job.repository)
+        validated = validate_review(run.output, workspace, result.findings, job.repository, rules)
         surviving = validated.findings
         refuted = []
 
         if settings.verifier_enabled and surviving:
             verification = await verify_findings(
                 self._provider, surviving, workspace=workspace, index=index, linter_findings=result.findings,
-                job=job, change_set=result.changes.change_set, summary=validated.summary,
+                job=job, change_set=change_set, summary=validated.summary, rules=rules,
             )
             surviving, refuted = verification.kept, verification.refuted
             stats.verifier_calls = verification.calls
@@ -138,7 +153,10 @@ class ReviewOrchestrator:
         review.linter_triage = validated.linter_triage
         review.dropped = validated.dropped + refuted
         review.triage_dropped = validated.triage_dropped
+        review.rule_checks = _rule_checks(rules, change_set, run.output.rule_checks, reported)
         review.risk_level = risk_level(reported)
+        if review.risk_level == "low" and any(c.outcome == "violated" for c in review.rule_checks):
+            review.risk_level = "medium"  # a violated rule is never low risk (§10.2)
 
         logger.info(
             "[job:%s] AI review: %d reported, %d dropped, %d refuted, %d triaged, $%s",
@@ -146,6 +164,35 @@ class ReviewOrchestrator:
             f"{stats.cost_usd:.5f}" if stats.cost_usd is not None else "unknown",
         )
         return _finish(review, status="completed")
+
+
+def _rule_checks(rules: RuleSet, change_set, model_checks, reported) -> list[RuleCheck]:
+    """
+    Each applicable rule's outcome. The Reviewer's word alone never makes a
+    rule "violated": only a reported issue citing the rule, which survived
+    the evidence checks and the Verifier, does.
+    """
+    cited = {rule_id for finding in reported for rule_id in finding.rule_ids}
+    said = {c.rule_id.strip().strip("[]"): c for c in model_checks}
+    relevant = rules.applicable(change_set) + [r for r in rules.rules if r.rule_id in cited]
+
+    checks, seen = [], set()
+    for rule in relevant:
+        if rule.rule_id in seen:
+            continue
+        seen.add(rule.rule_id)
+        claim = said.get(rule.rule_id)
+        if rule.rule_id in cited:
+            outcome = "violated"
+        elif claim is None:
+            outcome = "not_checked"
+        elif claim.outcome == "violated":
+            outcome = "not_confirmed"
+        else:
+            outcome = claim.outcome
+        checks.append(RuleCheck(rule_id=rule.rule_id, rule=rule.rule, severity=rule.severity, outcome=outcome,
+                                note=claim.note if claim else None))
+    return checks
 
 
 def _finish(review: AgentReview, *, status, skip_reason=None, error=None) -> AgentReview:

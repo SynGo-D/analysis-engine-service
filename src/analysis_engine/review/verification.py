@@ -11,7 +11,7 @@ from ..agents.verifier.schema import VerifierOutput
 from ..config import settings
 from ..domain import AgentFinding, AnalysisJob, ChangeSet, DroppedCandidate, Finding
 from ..domain.code_index import RepoIndex
-from ..retrieval import RetrievalTools, ToolExecutor, numbered_lines, redact
+from ..retrieval import RetrievalTools, ToolExecutor, format_rule, is_secret_file, numbered_lines, redact
 from ..workspace import WorkspaceSecurityError, run_git_output
 
 logger = logging.getLogger(__name__)
@@ -41,6 +41,7 @@ async def verify_findings(
     job: AnalysisJob,
     change_set: ChangeSet,
     summary: str,
+    rules=None,
 ) -> VerificationResult:
     """
     Agent 2 (docs/agent-architecture.md §8.2): each issue is checked by a
@@ -69,15 +70,15 @@ async def verify_findings(
 
     async def one(finding: AgentFinding) -> tuple[AgentFinding, AgentRun[VerifierOutput]]:
         async with semaphore:
-            content = await _brief(finding, workspace, index, job, change_set, summary)
-            executor = ToolExecutor(RetrievalTools(workspace, index, linter_findings))
+            content = await _brief(finding, workspace, index, job, change_set, summary, rules)
+            executor = ToolExecutor(RetrievalTools(workspace, index, linter_findings, rules=rules))
             return finding, await run_verifier(provider, content, executor)
 
     for finding, run in await asyncio.gather(*(one(f) for f in findings)):
         result.calls += 1
         result.usage = result.usage + run.usage
         result.cost_usd = None if result.cost_usd is None or run.cost_usd is None else result.cost_usd + run.cost_usd
-        _apply(finding, run, result, files, linter_findings)
+        _apply(finding, run, result, files, linter_findings, rules)
 
     logger.info("[job:%s] verifier: %d kept, %d refuted, $%s", job.job_id, len(result.kept), len(result.refuted),
                 f"{result.cost_usd:.5f}" if result.cost_usd is not None else "unknown")
@@ -85,7 +86,7 @@ async def verify_findings(
 
 
 def _apply(finding: AgentFinding, run: AgentRun[VerifierOutput], result: VerificationResult,
-           files: FileCache, linter_findings: list[Finding]) -> None:
+           files: FileCache, linter_findings: list[Finding], rules=None) -> None:
     verdict = run.output
 
     if verdict is None:
@@ -98,7 +99,7 @@ def _apply(finding: AgentFinding, run: AgentRun[VerifierOutput], result: Verific
         return
 
     if verdict.verdict == "drop":
-        invented = [e for e in verdict.counter_evidence if check_evidence(e, files, linter_findings)[0]]
+        invented = [e for e in verdict.counter_evidence if check_evidence(e, files, linter_findings, rules)[0]]
         if invented:
             logger.warning("verifier cited code that isn't there; keeping issue %r", finding.title)
             result.kept.append(finding)  # stays "unverified": the refutation was unsound
@@ -117,7 +118,7 @@ def _apply(finding: AgentFinding, run: AgentRun[VerifierOutput], result: Verific
 
 
 async def _brief(finding: AgentFinding, workspace: Path, index: RepoIndex, job: AnalysisJob,
-                 change_set: ChangeSet, summary: str) -> str:
+                 change_set: ChangeSet, summary: str, rules=None) -> str:
     """Everything one Verifier call starts from: intent, the claim, the code, that file's diff."""
     evidence = "\n".join(
         f"- {e.type} {e.ref}" + (f": {e.quote}" if e.quote else "") for e in finding.evidence
@@ -135,6 +136,7 @@ async def _brief(finding: AgentFinding, workspace: Path, index: RepoIndex, job: 
         "Evidence:",
         evidence,
         "",
+        *_rules_cited(finding, rules),
         "## Code around the issue",
         _code_around(finding, workspace, index),
         "",
@@ -142,6 +144,14 @@ async def _brief(finding: AgentFinding, workspace: Path, index: RepoIndex, job: 
         await _file_diff(workspace, change_set, finding.file_path),
     ]
     return redact("\n".join(parts))
+
+
+def _rules_cited(finding: AgentFinding, rules) -> list[str]:
+    cited = [rules.get(rule_id) for rule_id in finding.rule_ids] if rules else []
+    cited = [r for r in cited if r is not None]
+    if not cited:
+        return []
+    return ["## Business rule(s) the issue cites", *(format_rule(r) for r in cited), ""]
 
 
 def _code_around(finding: AgentFinding, workspace: Path, index: RepoIndex) -> str:
@@ -164,6 +174,8 @@ def _code_around(finding: AgentFinding, workspace: Path, index: RepoIndex) -> st
 async def _file_diff(workspace: Path, change_set: ChangeSet, path: str) -> str:
     if change_set.file(path) is None:
         return "(this file is not changed by the PR)"
+    if is_secret_file(path):
+        return "(credential file: never shown)"
     try:
         _code, output = await run_git_output(
             ["-c", "core.quotePath=false", "diff", "--unified=3", "--no-color", "--no-ext-diff", "--no-textconv",
