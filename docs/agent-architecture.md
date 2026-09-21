@@ -1,10 +1,12 @@
 # Analysis Engine — Agent Architecture
 
-> **Status:** Phases 0–5 are built: diff plumbing (`diffing/`), retrieval
-> tools (`retrieval/`), the context pack (`context/`), the agent runtime,
-> Reviewer, Verifier and Rule Miner (`agents/`), the review stage
-> (`review/`), business rules (`rules/`) and the evaluation harness
-> (`evaluation/`). Not built yet: feedback (phase 6).
+> **Status:** all seven phases (0–6) are built: diff plumbing
+> (`diffing/`), retrieval tools (`retrieval/`), the context pack
+> (`context/`), the agent runtime, Reviewer, Verifier and Rule Miner
+> (`agents/`), the review stage (`review/`), business rules (`rules/`),
+> the evaluation harness (`evaluation/`), and developer feedback with a
+> per-repository usage report. Private repositories are cloned with the
+> connecting user's token (`workspace/credentials.py`).
 >
 > **Evaluation (35 PRs including 7 business-rule PRs, `gpt-5.6-luna`):**
 > 25/25 planted bugs and rule violations found, $0.0014 per PR, p95 27 s.
@@ -763,7 +765,7 @@ visible to the dashboard.
 | 3 ✅ | **Evaluation harness:** 18 cases including clean PRs (more, harder ones next) | Yes | Baseline precision/recall recorded for the Reviewer alone |
 | 4 ✅ | **Verifier + Reporter** | Yes | Precision improves over the phase 3 baseline, recall drops by no more than 5 points |
 | 5 ✅ | **Business rules:** rules file, database rules, rule API, rule checks in the Reviewer, Rule Miner | Yes | Business-rule eval cases pass; suggested rules need acceptance |
-| 6 | **Feedback + cost reporting:** feedback endpoint and table, stats in the API | No | Feedback stored per fingerprint; cost per review visible |
+| 6 ✅ | **Feedback + cost reporting:** feedback endpoint and table, stats in the API | No | Feedback stored per fingerprint; cost per review visible |
 
 ## 16. Open decisions
 

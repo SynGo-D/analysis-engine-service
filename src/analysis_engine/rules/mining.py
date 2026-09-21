@@ -63,7 +63,7 @@ class RuleMiner:
         validate_clone_url(clone_url)
         validate_branch(branch)
 
-        head = await _branch_head(clone_url, branch)
+        head = await _branch_head(clone_url, branch, await self._workspaces.git_env_for(provider_name, repository))
         if head is None:
             return MiningResult(error=f"branch {branch!r} not found in {repository}")
 
@@ -177,10 +177,11 @@ async def _rules_in_file(workspace: Path) -> list[BusinessRule]:
     return []
 
 
-async def _branch_head(clone_url: str, branch: str) -> str | None:
+async def _branch_head(clone_url: str, branch: str, git_env: dict[str, str]) -> str | None:
     with tempfile.TemporaryDirectory() as scratch:
         code, output = await run_git_output(["ls-remote", clone_url, f"refs/heads/{branch}"], Path(scratch),
-                                            settings.git_clone_timeout_seconds, allowed_exit_codes=(0, 2))
+                                            settings.git_clone_timeout_seconds, allowed_exit_codes=(0, 2),
+                                            env=git_env)
     text = output.decode().split()
     return text[0] if code == 0 and text else None
 

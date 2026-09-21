@@ -37,7 +37,7 @@ class _Extractor:
     def __init__(self, outcome):
         self._outcome = outcome
 
-    async def extract(self, workspace_path, job):
+    async def extract(self, workspace_path, job, git_env=None):
         if isinstance(self._outcome, Exception):
             raise self._outcome
         return self._outcome

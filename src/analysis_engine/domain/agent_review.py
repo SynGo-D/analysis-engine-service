@@ -27,6 +27,19 @@ class ReviewEvidence(BaseModel):
     verified: bool = False
 
 
+FeedbackVerdict = Literal["useful", "not_useful", "wrong"]
+
+
+class FeedbackSummary(BaseModel):
+    """What developers said about one issue (attached when a review is read)."""
+
+    useful: int = 0
+    not_useful: int = 0
+    wrong: int = 0
+    # The requesting user's own verdict, so the dashboard can show it.
+    mine: FeedbackVerdict | None = None
+
+
 class AgentFinding(BaseModel):
     """An issue the AI review reports, with the evidence it rests on."""
 
@@ -49,6 +62,8 @@ class AgentFinding(BaseModel):
     # passed the engine's mechanical evidence checks.
     verification: Literal["unverified", "verified"] = "unverified"
     source: str = "reviewer"
+    # Filled in when the review is read; never stored with the review.
+    feedback: FeedbackSummary | None = None
 
 
 class TriagedLinterFinding(BaseModel):
@@ -84,7 +99,8 @@ class DroppedCandidate(BaseModel):
     title: str
     reason: str
     # "evidence": failed the mechanical checks. "verifier": refuted by Agent 2.
-    stage: Literal["evidence", "verifier"] = "evidence"
+    # "feedback": a developer marked this same issue wrong on an earlier review.
+    stage: Literal["evidence", "verifier", "feedback"] = "evidence"
 
 
 class DroppedTriage(BaseModel):

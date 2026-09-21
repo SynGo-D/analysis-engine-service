@@ -91,7 +91,7 @@ class AnalysisOrchestrator:
                     *(analyzer.analyze(workspace, job) for analyzer in analyzers),
                     return_exceptions=True,
                 ),
-                self._extract_changes(workspace.path, job),
+                self._extract_changes(workspace.path, job, workspace.git_env),
             )
 
             # Must happen before the workspace context exits — the temp
@@ -155,7 +155,9 @@ class AnalysisOrchestrator:
             await on_review(review)
         return review
 
-    async def _extract_changes(self, workspace_path, job: AnalysisJob) -> tuple[PullRequestChanges, RepoIndex | None]:
+    async def _extract_changes(
+        self, workspace_path, job: AnalysisJob, git_env: dict[str, str] | None = None
+    ) -> tuple[PullRequestChanges, RepoIndex | None]:
         """
         What the PR changed, plus the symbols those changes touch.
 
@@ -164,7 +166,7 @@ class AnalysisOrchestrator:
         failed job.
         """
         try:
-            changes = await self._diff_extractor.extract(workspace_path, job)
+            changes = await self._diff_extractor.extract(workspace_path, job, git_env)
         except Exception:
             logger.exception("[job:%s] computing PR changes failed", job.job_id)
             return PullRequestChanges(status="unavailable", unavailable_reason="error"), None

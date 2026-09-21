@@ -47,13 +47,15 @@ class DiffExtractor:
         self._timeout = timeout if timeout is not None else settings.git_clone_timeout_seconds
         self._fetch_depths = fetch_depths
 
-    async def extract(self, workspace_path: Path, job: AnalysisJob) -> PullRequestChanges:
+    async def extract(self, workspace_path: Path, job: AnalysisJob,
+                      git_env: dict[str, str] | None = None) -> PullRequestChanges:
+        """`git_env`: the clone's credentials, needed to fetch a private repository's target branch."""
         if not job.target_branch:
             return _unavailable("no_target_branch")
 
         try:
             validate_branch(job.target_branch)
-            base_sha = await self._find_merge_base(workspace_path, job)
+            base_sha = await self._find_merge_base(workspace_path, job, git_env)
             if base_sha is None:
                 return _unavailable("no_merge_base")
 
@@ -66,18 +68,19 @@ class DiffExtractor:
 
     # -------------------------------------------------------------------
 
-    async def _find_merge_base(self, workspace: Path, job: AnalysisJob) -> str | None:
+    async def _find_merge_base(self, workspace: Path, job: AnalysisJob,
+                               git_env: dict[str, str] | None = None) -> str | None:
         target_ref = f"refs/remotes/origin/{job.target_branch}"
         # "--" keeps the refspec from being read as an option, as in
         # clone_commit. The refspec names a local ref so merge-base can use it.
         target_refspec = f"+refs/heads/{job.target_branch}:{target_ref}"
 
         for attempt, depth in enumerate(self._fetch_depths):
-            await self._git(workspace, ["fetch", "--depth", str(depth), "origin", "--", target_refspec])
+            await self._git(workspace, ["fetch", "--depth", str(depth), "origin", "--", target_refspec], git_env)
             if attempt > 0:
                 # Deepen the head side too: the common ancestor may be
                 # outside the head branch's original 50 commits.
-                await self._git(workspace, ["fetch", "--depth", str(depth), "origin", "--", job.branch])
+                await self._git(workspace, ["fetch", "--depth", str(depth), "origin", "--", job.branch], git_env)
 
             code, output = await run_git_output(
                 ["merge-base", "HEAD", target_ref], workspace, self._timeout, allowed_exit_codes=(0, 1)
@@ -128,11 +131,11 @@ class DiffExtractor:
             lines_removed=change_set.lines_removed,
         )
 
-    async def _git(self, workspace: Path, args: list[str]) -> str:
-        return (await self._git_bytes(workspace, args)).decode("utf-8", errors="replace")
+    async def _git(self, workspace: Path, args: list[str], env: dict[str, str] | None = None) -> str:
+        return (await self._git_bytes(workspace, args, env)).decode("utf-8", errors="replace")
 
-    async def _git_bytes(self, workspace: Path, args: list[str]) -> bytes:
-        _code, output = await run_git_output(args, workspace, self._timeout)
+    async def _git_bytes(self, workspace: Path, args: list[str], env: dict[str, str] | None = None) -> bytes:
+        _code, output = await run_git_output(args, workspace, self._timeout, env=env)
         return output
 
 
