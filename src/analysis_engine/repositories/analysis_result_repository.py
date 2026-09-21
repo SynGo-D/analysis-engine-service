@@ -2,7 +2,15 @@ import json
 
 import asyncpg
 
-from ..domain import AnalysisMetrics, AnalysisResult, Finding, FileStatistic, PythonAnalysisResult, RuleStatistic
+from ..domain import (
+    AnalysisMetrics,
+    AnalysisResult,
+    Finding,
+    FileStatistic,
+    PullRequestChanges,
+    PythonAnalysisResult,
+    RuleStatistic,
+)
 
 
 class AnalysisResultRepository:
@@ -29,9 +37,9 @@ class AnalysisResultRepository:
                         result_id, job_id, repository, pull_request_number,
                         commit_sha, branch, status, error_message, metrics,
                         rule_statistics, file_statistics, python_result,
-                        started_at, completed_at
+                        pull_request_changes, started_at, completed_at
                     )
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
                     ON CONFLICT (result_id) DO NOTHING;
                     """,
                     result.result_id,
@@ -46,6 +54,7 @@ class AnalysisResultRepository:
                     json.dumps([s.model_dump() for s in result.rule_statistics]),
                     json.dumps([s.model_dump() for s in result.file_statistics]),
                     result.python.model_dump_json() if result.python else None,
+                    result.changes.model_dump_json() if result.changes else None,
                     result.started_at,
                     result.completed_at,
                 )
@@ -165,6 +174,10 @@ class AnalysisResultRepository:
             rule_statistics=[RuleStatistic.model_validate(s) for s in json.loads(row["rule_statistics"])],
             file_statistics=[FileStatistic.model_validate(s) for s in json.loads(row["file_statistics"])],
             python=PythonAnalysisResult.model_validate_json(row["python_result"]) if row["python_result"] else None,
+            changes=(
+                PullRequestChanges.model_validate_json(row["pull_request_changes"])
+                if row["pull_request_changes"] else None
+            ),
             started_at=row["started_at"],
             completed_at=row["completed_at"],
             error_message=row["error_message"],

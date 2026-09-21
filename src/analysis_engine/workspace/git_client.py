@@ -98,6 +98,26 @@ async def _run_git(args: list[str], cwd: Path, timeout: float) -> None:
     shell injection: even a maliciously crafted argument is passed to git
     as one literal value, never interpreted by a shell.
     """
+    await run_git_output(args, cwd, timeout)
+
+
+async def run_git_output(
+    args: list[str],
+    cwd: Path,
+    timeout: float,
+    allowed_exit_codes: tuple[int, ...] = (0,),
+) -> tuple[int, bytes]:
+    """
+    Same execution rules as `_run_git`, but returns (exit code, stdout).
+
+    `allowed_exit_codes` exists because some git commands use a non-zero
+    exit to answer a question rather than to report a failure —
+    `git merge-base` exits 1 when there is no common ancestor.
+
+    stdout is returned as bytes: diff output contains file content in
+    whatever encoding the repository uses, and decoding is the caller's
+    decision.
+    """
     process = await asyncio.create_subprocess_exec(
         "git", *args,
         cwd=str(cwd),
@@ -106,17 +126,19 @@ async def _run_git(args: list[str], cwd: Path, timeout: float) -> None:
     )
 
     try:
-        _stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
+        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
     except asyncio.TimeoutError:
         process.kill()
         await process.wait()
         raise WorkspaceSecurityError(f"git {' '.join(args)} timed out after {timeout}s.")
 
-    if process.returncode != 0:
+    if process.returncode not in allowed_exit_codes:
         raise WorkspaceSecurityError(
             f"git {' '.join(args)} failed (exit {process.returncode}): "
             f"{stderr.decode(errors='replace').strip()}"
         )
+
+    return process.returncode, stdout
 
 
 async def clone_commit(

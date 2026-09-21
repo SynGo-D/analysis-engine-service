@@ -4,6 +4,7 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
 
+from .change_set import PullRequestChanges
 from .finding import Finding
 from .metrics import AnalysisMetrics, FileStatistic, RuleStatistic
 from .python_metrics import PythonAnalysisResult
@@ -52,6 +53,12 @@ class AnalysisResult(BaseModel):
     # all — that's a materially different fact than "Python was analyzed
     # and every tool happened to fail".
     python: PythonAnalysisResult | None = None
+
+    # What the pull request itself changed (see domain/change_set.py).
+    # None on results stored before this existed; otherwise always set,
+    # with status "unavailable" and a reason when the diff couldn't be
+    # worked out.
+    changes: PullRequestChanges | None = None
 
     started_at: datetime
     completed_at: datetime | None = None
