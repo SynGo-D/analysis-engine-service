@@ -38,3 +38,11 @@ class AnalysisJob(BaseModel):
     branch: str
     pull_request_number: int = Field(alias="prNumber")
     queued_at: str = Field(alias="timestamp", description="When webhook-listener queued this job")
+
+    # Added for the AI review (see docs/agent-architecture.md §4). All
+    # optional: messages queued before webhook-listener sent them must
+    # still parse. Without target_branch there is no diff, so the review
+    # is skipped while linter analysis runs as before.
+    target_branch: str | None = Field(default=None, alias="targetBranch")
+    title: str | None = None
+    description: str | None = None

@@ -1,6 +1,14 @@
 from .analysis_job import AnalysisJob, Provider
 from .finding import Finding, Severity, FindingCategory
 from .analysis_result import AnalysisResult, AnalysisStatus
+from .change_set import (
+    ChangeSet,
+    ChangeStatus,
+    ChangedFile,
+    ChangedSymbol,
+    ChangesUnavailableReason,
+    PullRequestChanges,
+)
 from .analyzer_status import AnalyzerRunStatus
 from .metrics import (
     AnalysisMetrics,
@@ -38,6 +46,12 @@ __all__ = [
     "FindingCategory",
     "AnalysisResult",
     "AnalysisStatus",
+    "ChangeSet",
+    "ChangeStatus",
+    "ChangedFile",
+    "ChangedSymbol",
+    "ChangesUnavailableReason",
+    "PullRequestChanges",
     "AnalyzerRunStatus",
     "AnalysisMetrics",
     "ComplexityMetrics",

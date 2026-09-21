@@ -4,8 +4,10 @@ from datetime import datetime, timezone
 
 from .finding_normalizer import FindingNormalizer
 from ..analyzers import Analyzer
-from ..domain import AnalysisJob, AnalysisResult, Finding, PythonAnalysisResult
+from ..diffing import DiffExtractor, changed_symbols, mark_findings
+from ..domain import AnalysisJob, AnalysisResult, Finding, PullRequestChanges, PythonAnalysisResult
 from ..factories import AnalyzerFactory, detect_languages
+from ..indexing import CodeIndexer
 from ..metrics import calculate_file_statistics, calculate_metrics, calculate_rule_statistics, scan_js_ts_files
 from ..workspace import WorkspaceManager
 
@@ -18,7 +20,9 @@ class AnalysisOrchestrator:
 
         validate job -> obtain repository -> create workspace
           -> checkout commit -> detect languages -> select analyzers
-          -> run ESLint/Python analyzers -> normalize findings
+          -> run ESLint/Python analyzers  (concurrently with: work out
+             what the PR changed, then which symbols that touches)
+          -> normalize findings -> mark findings on changed lines
           -> calculate metrics -> return result (persistence/publish
           happen in the caller)
 
@@ -35,10 +39,14 @@ class AnalysisOrchestrator:
         workspace_manager: WorkspaceManager | None = None,
         analyzer_factory: AnalyzerFactory | None = None,
         finding_normalizer: FindingNormalizer | None = None,
+        diff_extractor: DiffExtractor | None = None,
+        code_indexer: CodeIndexer | None = None,
     ):
         self._workspace_manager = workspace_manager or WorkspaceManager()
         self._analyzer_factory = analyzer_factory or AnalyzerFactory()
         self._finding_normalizer = finding_normalizer or FindingNormalizer()
+        self._diff_extractor = diff_extractor or DiffExtractor()
+        self._code_indexer = code_indexer or CodeIndexer()
 
     async def run(self, job: AnalysisJob) -> AnalysisResult:
         started_at = datetime.now(timezone.utc)
@@ -54,10 +62,16 @@ class AnalysisOrchestrator:
 
             # Analyzers are independent — each only reads the checked-out
             # workspace, none write to it — so there's no reason to run
-            # them one at a time.
-            results = await asyncio.gather(
-                *(analyzer.analyze(workspace, job) for analyzer in analyzers),
-                return_exceptions=True,
+            # them one at a time. Working out the PR's changes runs
+            # alongside them: it only fetches into .git, which no analyzer
+            # reads, and its network round trip would otherwise add
+            # straight to the job's duration.
+            results, changes = await asyncio.gather(
+                asyncio.gather(
+                    *(analyzer.analyze(workspace, job) for analyzer in analyzers),
+                    return_exceptions=True,
+                ),
+                self._extract_changes(workspace.path, job),
             )
 
             # Must happen before the workspace context exits — the temp
@@ -77,6 +91,9 @@ class AnalysisOrchestrator:
 
         findings = self._finding_normalizer.normalize(raw_findings)
 
+        if changes.status == "available" and changes.change_set is not None:
+            findings, changes.findings_on_changed_lines = mark_findings(findings, changes.change_set)
+
         return AnalysisResult(
             job_id=job.job_id,
             repository=job.repository,
@@ -89,10 +106,42 @@ class AnalysisOrchestrator:
             rule_statistics=calculate_rule_statistics(findings),
             file_statistics=calculate_file_statistics(findings, file_lines),
             python=self._extract_python_result(analyzers),
+            changes=changes,
             started_at=started_at,
             completed_at=datetime.now(timezone.utc),
             error_message="; ".join(failed_tools) if all_failed else None,
         )
+
+    async def _extract_changes(self, workspace_path, job: AnalysisJob) -> PullRequestChanges:
+        """
+        What the PR changed, plus the symbols those changes touch.
+
+        Never lets an error escape: the PR view is an addition to the
+        analysis, and a bug here must not turn a good linter run into a
+        failed job.
+        """
+        try:
+            changes = await self._diff_extractor.extract(workspace_path, job)
+        except Exception:
+            logger.exception("[job:%s] computing PR changes failed", job.job_id)
+            return PullRequestChanges(status="unavailable", unavailable_reason="error")
+
+        logger.info(
+            "[job:%s] PR changes: %s%s", job.job_id, changes.status,
+            f" ({changes.unavailable_reason})" if changes.unavailable_reason else
+            f" ({changes.files_changed} files, +{changes.lines_added}/-{changes.lines_removed})",
+        )
+
+        if changes.status == "available" and changes.change_set is not None and changes.change_set.files:
+            try:
+                # tree-sitter parsing is CPU-bound and synchronous; off the
+                # event loop so it doesn't stall the analyzers' subprocess I/O.
+                index = await asyncio.to_thread(self._code_indexer.build, workspace_path)
+                changes.changed_symbols = changed_symbols(index, changes.change_set)
+            except Exception:
+                logger.exception("[job:%s] indexing for changed symbols failed", job.job_id)
+
+        return changes
 
     def _collect_results(
         self,

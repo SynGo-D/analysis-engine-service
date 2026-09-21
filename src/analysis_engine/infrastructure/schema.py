@@ -44,6 +44,10 @@ ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS rule_statistics JSONB NOT 
 ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS file_statistics JSONB NOT NULL DEFAULT '[]'::jsonb;
 ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS python_result JSONB;
 
+-- PullRequestChanges (see domain/change_set.py): what the PR itself
+-- changed. NULL for results stored before this column existed.
+ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS pull_request_changes JSONB;
+
 CREATE INDEX IF NOT EXISTS idx_analysis_results_repo
     ON analysis_results (repository, pull_request_number, created_at DESC);
 
