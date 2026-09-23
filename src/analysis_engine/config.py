@@ -64,6 +64,22 @@ class Settings(BaseSettings):
     eslint_bin_path: str = str(_PROJECT_ROOT / "tools/eslint/node_modules/.bin/eslint")
     eslint_config_path: str = str(_PROJECT_ROOT / "tools/eslint/eslint.config.cjs")
 
+    # PMD's launcher and this service's own ruleset, resolved against the
+    # project root for the same reason ESLint's paths are: the subprocess
+    # runs with cwd set to the analyzed workspace, so a relative default
+    # would resolve against the wrong directory.
+    #
+    # PMD is a Java program, so the image needs a JRE — that is the whole
+    # cost of Java support, and the reason PMD was chosen over SpotBugs,
+    # which additionally needs the repository compiled.
+    pmd_bin_path: str = str(_PROJECT_ROOT / "tools/pmd/pmd-bin/bin/pmd")
+    pmd_ruleset_path: str = str(_PROJECT_ROOT / "tools/pmd/ruleset.xml")
+
+    # PMD starts a JVM and parses every file, so it is slower off the mark
+    # than ESLint; its own setting so it can be raised for large
+    # repositories without loosening ESLint's.
+    java_analyzer_timeout_seconds: float = 180.0
+
     # Per-tool-invocation timeout for the Python analyzers (Pylint, each
     # of Radon's four subcommands, Bandit) — separate from
     # analyzer_timeout_seconds since Python analysis runs three tools

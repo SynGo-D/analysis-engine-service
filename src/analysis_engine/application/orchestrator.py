@@ -10,7 +10,7 @@ from ..domain import AgentReview, AnalysisJob, AnalysisResult, Finding, PullRequ
 from ..domain.code_index import RepoIndex
 from ..factories import AnalyzerFactory, detect_languages
 from ..indexing import CodeIndexer
-from ..metrics import calculate_file_statistics, calculate_metrics, calculate_rule_statistics, scan_js_ts_files
+from ..metrics import calculate_file_statistics, calculate_metrics, calculate_rule_statistics, scan_source_files
 from ..review import ReviewOrchestrator
 from ..workspace import WorkspaceManager
 
@@ -96,8 +96,10 @@ class AnalysisOrchestrator:
 
             # Must happen before the workspace context exits — the temp
             # checkout is deleted as soon as it does, and AnalysisMetrics
-            # needs each file's line count independent of ESLint's output.
-            file_lines = scan_js_ts_files(workspace.path)
+            # needs each file's line count independent of any analyzer's
+            # output. Scoped to the detected languages so the density
+            # figures are measured against the code that was analyzed.
+            file_lines = scan_source_files(workspace.path, languages)
 
             result = self._build_result(job, analyzers, results, changes, file_lines, started_at)
             if on_result is not None:

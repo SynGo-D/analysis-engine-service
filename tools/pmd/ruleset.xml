@@ -1,0 +1,120 @@
+<?xml version="1.0"?>
+<!--
+Fixed, generic PMD ruleset applied to every analyzed Java repository —
+the repository's own ruleset, Maven plugins and build files are
+deliberately never used, for the same reason the ESLint analyzer ignores
+a repository's own config: running repository-controlled build tooling on
+the analysis host would undermine "never execute untrusted repository
+code directly on the host."
+
+PMD reads source, so it never compiles or runs the code under analysis.
+That is why PMD is used here and SpotBugs is not: SpotBugs reads
+bytecode, which would mean a full Maven build for every review.
+
+The rules are grouped by what they are for. The first group is
+load-bearing: AnalysisMetrics (see src/analysis_engine/metrics/) is
+derived from those violation messages, exactly as it is from ESLint's
+complexity/max-lines rules, so removing one empties a dashboard panel.
+
+Thresholds are left at PMD's defaults. They are what the reported numbers
+are measured against, and a repository that never crosses them correctly
+reports zero violations rather than nothing at all.
+-->
+<ruleset name="CodePulse Java"
+         xmlns="http://pmd.sourceforge.net/ruleset/2.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://pmd.sourceforge.net/ruleset/2.0.0 https://pmd.sourceforge.io/ruleset_2_0_0.xsd">
+
+  <description>Correctness, complexity and dead code for Java, tuned for review rather than style enforcement.</description>
+
+  <!-- ===================================================================
+       Metrics. These four feed the dashboard's Complexity, Code Size and
+       Unused Code panels. Their messages carry the measured value, which
+       metrics/calculator.py parses back out.
+       =================================================================== -->
+  <rule ref="category/java/design.xml/CyclomaticComplexity"/>
+  <rule ref="category/java/design.xml/CognitiveComplexity"/>
+  <rule ref="category/java/design.xml/NcssCount"/>
+  <rule ref="category/java/design.xml/NPathComplexity"/>
+
+  <!-- Dead code. Java's compiler rejects genuinely unreachable
+       statements outright, so there is no Java equivalent of ESLint's
+       no-unreachable — the dashboard's "Unreachable Code" count is
+       structurally zero for Java, not missing. -->
+  <rule ref="category/java/bestpractices.xml/UnusedLocalVariable"/>
+  <rule ref="category/java/bestpractices.xml/UnusedPrivateField"/>
+  <rule ref="category/java/bestpractices.xml/UnusedPrivateMethod"/>
+  <rule ref="category/java/bestpractices.xml/UnusedFormalParameter"/>
+  <rule ref="category/java/bestpractices.xml/UnusedAssignment"/>
+
+  <!-- ===================================================================
+       Bugs. Things that are wrong rather than merely untidy.
+       =================================================================== -->
+  <rule ref="category/java/errorprone.xml/BrokenNullCheck"/>
+  <rule ref="category/java/errorprone.xml/MisplacedNullCheck"/>
+  <rule ref="category/java/errorprone.xml/CompareObjectsWithEquals"/>
+  <rule ref="category/java/errorprone.xml/UseEqualsToCompareStrings"/>
+  <rule ref="category/java/errorprone.xml/EqualsNull"/>
+  <rule ref="category/java/errorprone.xml/OverrideBothEqualsAndHashcode"/>
+  <rule ref="category/java/errorprone.xml/ComparisonWithNaN"/>
+  <rule ref="category/java/errorprone.xml/CollectionTypeMismatch"/>
+  <rule ref="category/java/errorprone.xml/ClassCastExceptionWithToArray"/>
+  <rule ref="category/java/errorprone.xml/UnconditionalIfStatement"/>
+  <rule ref="category/java/errorprone.xml/IdenticalConditionalBranches"/>
+  <rule ref="category/java/errorprone.xml/ImplicitSwitchFallThrough"/>
+  <rule ref="category/java/errorprone.xml/AvoidBranchingStatementAsLastInLoop"/>
+  <rule ref="category/java/errorprone.xml/JumbledIncrementer"/>
+  <rule ref="category/java/errorprone.xml/ReturnFromFinallyBlock"/>
+  <rule ref="category/java/errorprone.xml/DoNotThrowExceptionInFinally"/>
+  <rule ref="category/java/errorprone.xml/CloseResource"/>
+  <rule ref="category/java/errorprone.xml/CheckSkipResult"/>
+  <rule ref="category/java/errorprone.xml/ConfusingArgumentToVarargsMethod"/>
+  <rule ref="category/java/errorprone.xml/StringBufferInstantiationWithChar"/>
+  <rule ref="category/java/errorprone.xml/AvoidDecimalLiteralsInBigDecimalConstructor"/>
+  <rule ref="category/java/errorprone.xml/DontUseFloatTypeForLoopIndices"/>
+  <rule ref="category/java/errorprone.xml/InstantiationToGetClass"/>
+  <rule ref="category/java/errorprone.xml/SuspiciousEqualsMethodName"/>
+  <rule ref="category/java/errorprone.xml/ProperCloneImplementation"/>
+  <rule ref="category/java/errorprone.xml/DoNotTerminateVM"/>
+  <rule ref="category/java/errorprone.xml/AvoidCallingFinalize"/>
+
+  <!-- An empty catch block is how a real failure becomes silence, which
+       is the single most common way a bug survives review. Comments are
+       allowed to explain a deliberate one. -->
+  <rule ref="category/java/errorprone.xml/EmptyCatchBlock">
+    <properties>
+      <property name="allowCommentedBlocks" value="true"/>
+    </properties>
+  </rule>
+
+  <!-- ===================================================================
+       Maintainability. Kept deliberately short: each of these is a thing
+       a reviewer would actually say in a comment.
+       =================================================================== -->
+  <rule ref="category/java/bestpractices.xml/PreserveStackTrace"/>
+  <rule ref="category/java/bestpractices.xml/MissingOverride"/>
+  <rule ref="category/java/bestpractices.xml/LiteralsFirstInComparisons"/>
+  <rule ref="category/java/bestpractices.xml/UseCollectionIsEmpty"/>
+  <rule ref="category/java/bestpractices.xml/UseTryWithResources"/>
+  <rule ref="category/java/bestpractices.xml/ForLoopCanBeForeach"/>
+  <rule ref="category/java/bestpractices.xml/AvoidPrintStackTrace"/>
+  <rule ref="category/java/bestpractices.xml/SystemPrintln"/>
+  <rule ref="category/java/design.xml/ExcessiveParameterList"/>
+  <rule ref="category/java/design.xml/AvoidDeeplyNestedIfStmts"/>
+  <rule ref="category/java/design.xml/CollapsibleIfStatements"/>
+  <rule ref="category/java/design.xml/SimplifyBooleanReturns"/>
+  <rule ref="category/java/design.xml/SimplifyConditional"/>
+  <rule ref="category/java/design.xml/UselessOverridingMethod"/>
+  <rule ref="category/java/design.xml/ExceptionAsFlowControl"/>
+
+  <!--
+  Deliberately NOT included, having been measured against real Spring
+  code: LawOfDemeter and GuardLogStatement (three of the ten violations
+  on a 14-file service, all of them noise), ImplicitFunctionalInterface,
+  UseUtilityClass, DataClass and GodClass (they fire on ordinary Spring
+  DTOs, entities and configuration classes), AvoidDuplicateLiterals,
+  MissingSerialVersionUID, AtLeastOneConstructor, CommentRequired and the
+  rest of the documentation/style rules. A review that reports style
+  preferences next to real defects teaches people to ignore all of it.
+  -->
+</ruleset>
