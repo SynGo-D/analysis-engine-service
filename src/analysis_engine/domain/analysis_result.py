@@ -33,6 +33,13 @@ class AnalysisResult(BaseModel):
     commit_sha: str
     branch: str
 
+    # Carried from the job so a stored analysis can be attributed to the
+    # person who opened the pull request, which is what per-contributor
+    # reporting is grouped by. None for analyses stored before the author
+    # was threaded through, and for providers that omit a deleted account.
+    author_username: str | None = None
+    author_provider_id: str | None = None
+
     status: AnalysisStatus
     findings: list[Finding] = Field(default_factory=list)
 

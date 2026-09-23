@@ -135,6 +135,8 @@ class AnalysisOrchestrator:
             pull_request_number=job.pull_request_number,
             commit_sha=job.commit_sha,
             branch=job.branch,
+            author_username=job.author.username if job.author else None,
+            author_provider_id=job.author.provider_user_id if job.author else None,
             status="failed" if all_failed else "completed",
             findings=findings,
             metrics=calculate_metrics(findings, file_lines),
