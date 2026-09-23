@@ -20,8 +20,18 @@ WORKDIR /app
 # Python dependencies (FastAPI, asyncpg, aio-pika, Pylint, Radon, Bandit —
 # see pyproject.toml for exact pins) — installed before copying the rest
 # of the source so this layer only rebuilds when dependencies change.
+#
+# The empty package is not decoration: setuptools resolves
+# [tool.setuptools.packages.find] where = ["src"] while working out what an
+# editable install points at, and with no src/ at all the build fails
+# outright ("Getting requirements to build editable did not run
+# successfully"). A placeholder is enough to satisfy it; COPY . . below
+# replaces it with the real source, which the editable install already
+# points to.
 COPY pyproject.toml ./
-RUN pip install --no-cache-dir -e ".[dev]"
+RUN mkdir -p src/analysis_engine \
+    && touch src/analysis_engine/__init__.py \
+    && pip install --no-cache-dir -e ".[dev]"
 
 # ESLint's own dedicated toolchain (never the analyzed repository's).
 COPY tools/eslint/package.json tools/eslint/package-lock.json tools/eslint/
