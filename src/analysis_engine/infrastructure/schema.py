@@ -48,6 +48,19 @@ ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS python_result JSONB;
 -- changed. NULL for results stored before this column existed.
 ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS pull_request_changes JSONB;
 
+-- Who opened the pull request. Nullable rather than defaulted: rows
+-- written before this existed genuinely have no author, and an empty
+-- string would be indistinguishable from a real one.
+ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS author_username TEXT;
+ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS author_provider_id TEXT;
+
+-- The contributor page groups one repository's analyses by author, which
+-- is exactly this index. Partial, because rows with no author are never
+-- grouped and there is no reason to carry them in it.
+CREATE INDEX IF NOT EXISTS idx_analysis_results_repository_author
+    ON analysis_results (repository, author_username)
+    WHERE author_username IS NOT NULL;
+
 CREATE INDEX IF NOT EXISTS idx_analysis_results_repo
     ON analysis_results (repository, pull_request_number, created_at DESC);
 

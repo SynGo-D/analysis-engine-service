@@ -7,6 +7,17 @@ from pydantic import BaseModel, ConfigDict, Field
 Provider = Literal["github", "gitlab"]
 
 
+class PullRequestAuthor(BaseModel):
+    """The pull request's opener, as the provider identifies them."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    # The provider's numeric id, kept because a person can rename
+    # themselves on GitHub and the login is not a stable key.
+    provider_user_id: str = Field(alias="providerUserId")
+    username: str
+
+
 class AnalysisJob(BaseModel):
     """
     The job this service consumes from pr_queue.
@@ -46,3 +57,10 @@ class AnalysisJob(BaseModel):
     target_branch: str | None = Field(default=None, alias="targetBranch")
     title: str | None = None
     description: str | None = None
+
+    # Who opened the pull request, for per-contributor reporting. Optional
+    # like the fields above: messages queued before webhook-listener sent
+    # it must still parse, and a provider genuinely omits it when the
+    # account has been deleted. An analysis without an author is still a
+    # valid analysis, just an unattributed one.
+    author: PullRequestAuthor | None = None

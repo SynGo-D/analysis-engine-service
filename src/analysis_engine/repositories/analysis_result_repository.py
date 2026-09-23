@@ -41,9 +41,10 @@ class AnalysisResultRepository:
                         result_id, job_id, repository, pull_request_number,
                         commit_sha, branch, status, error_message, metrics,
                         rule_statistics, file_statistics, python_result,
-                        pull_request_changes, started_at, completed_at
+                        pull_request_changes, started_at, completed_at,
+                        author_username, author_provider_id
                     )
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
                     ON CONFLICT (result_id) DO NOTHING;
                     """,
                     result.result_id,
@@ -61,6 +62,8 @@ class AnalysisResultRepository:
                     result.changes.model_dump_json() if result.changes else None,
                     result.started_at,
                     result.completed_at,
+                    result.author_username,
+                    result.author_provider_id,
                 )
 
                 if result.findings:
@@ -174,6 +177,8 @@ class AnalysisResultRepository:
             pull_request_number=row["pull_request_number"],
             commit_sha=row["commit_sha"],
             branch=row["branch"],
+            author_username=row["author_username"],
+            author_provider_id=row["author_provider_id"],
             status=row["status"],
             findings=findings,
             # asyncpg returns JSONB columns as raw JSON text (no codec
@@ -212,3 +217,80 @@ class AnalysisResultRepository:
             remediation_minutes=row["remediation_minutes"],
             metadata=json.loads(row["metadata"]) if row["metadata"] else {},
         )
+
+    async def contributor_summary(self, repository: str) -> list[dict]:
+        """
+        One row per person who has opened an analysed pull request in this
+        repository, with what their work amounted to.
+
+        Aggregated in SQL rather than by loading every result and grouping
+        in Python: a busy repository has thousands of analyses, and all
+        that is wanted is a handful of totals per person.
+
+        Pull requests are counted DISTINCT because a pull request is
+        re-analysed on every push — counting rows would report someone who
+        pushed ten times as ten pull requests. Line counts come from the
+        stored diff, so they describe what the pull request changed rather
+        than what the whole repository contains.
+
+        Rows with no author are excluded: they are analyses stored before
+        the author was carried through, and showing them as a contributor
+        called "unknown" would invite the number to be read as a person.
+        """
+        rows = await self._pool.fetch(
+            """
+            SELECT
+                r.author_username                                   AS username,
+                MAX(r.author_provider_id)                           AS provider_user_id,
+                COUNT(DISTINCT r.pull_request_number)               AS pull_requests,
+                COUNT(*)                                            AS analyses,
+                MAX(r.completed_at)                                 AS last_analysis_at,
+                COALESCE(SUM((r.metrics ->> 'total_issues')::int), 0)         AS issues,
+                COALESCE(SUM((r.metrics ->> 'errors')::int), 0)               AS errors,
+                COALESCE(SUM((r.metrics ->> 'warnings')::int), 0)             AS warnings,
+                COALESCE(SUM((r.pull_request_changes ->> 'lines_added')::int), 0)   AS lines_added,
+                COALESCE(SUM((r.pull_request_changes ->> 'lines_removed')::int), 0) AS lines_removed,
+                COALESCE(SUM((r.pull_request_changes ->> 'files_changed')::int), 0) AS files_changed
+            FROM analysis_results r
+            WHERE r.repository = $1
+              AND r.author_username IS NOT NULL
+              AND r.status = 'completed'
+            GROUP BY r.author_username
+            ORDER BY pull_requests DESC, username ASC;
+            """,
+            repository,
+        )
+        return [dict(row) for row in rows]
+
+    async def contributor_review_findings(self, repository: str) -> dict[str, dict[str, int]]:
+        """
+        AI review findings per author, by severity.
+
+        Separate from contributor_summary because a review lives in its
+        own table and its findings are a JSONB array: expanding that array
+        multiplies rows, which would corrupt the totals in the query above
+        if the two were joined into one.
+        """
+        rows = await self._pool.fetch(
+            """
+            SELECT
+                r.author_username                          AS username,
+                finding ->> 'severity'                     AS severity,
+                COUNT(*)                                   AS total
+            FROM analysis_results r
+            JOIN agent_reviews a ON a.result_id = r.result_id
+            CROSS JOIN LATERAL jsonb_array_elements(
+                COALESCE(a.review -> 'findings', '[]'::jsonb)
+            ) AS finding
+            WHERE r.repository = $1
+              AND r.author_username IS NOT NULL
+              AND a.status = 'completed'
+            GROUP BY r.author_username, finding ->> 'severity';
+            """,
+            repository,
+        )
+
+        by_author: dict[str, dict[str, int]] = {}
+        for row in rows:
+            by_author.setdefault(row["username"], {})[row["severity"] or "unknown"] = row["total"]
+        return by_author
