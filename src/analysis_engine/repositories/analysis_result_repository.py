@@ -223,15 +223,21 @@ class AnalysisResultRepository:
         One row per person who has opened an analysed pull request in this
         repository, with what their work amounted to.
 
+        Everything except the analysis count is measured over the *latest*
+        analysis of each pull request. A pull request is re-analysed on
+        every push, and each run stores the whole diff against the target
+        branch, not just what that push added — so summing every run would
+        report a pull request pushed to twice as twice the lines, twice
+        the files and twice the issues. That is not a rounding error; it
+        scales with how often someone pushes.
+
+        The analysis count is deliberately the opposite: it counts every
+        run, because "how many times was this reviewed" is a different and
+        useful question.
+
         Aggregated in SQL rather than by loading every result and grouping
         in Python: a busy repository has thousands of analyses, and all
         that is wanted is a handful of totals per person.
-
-        Pull requests are counted DISTINCT because a pull request is
-        re-analysed on every push — counting rows would report someone who
-        pushed ten times as ten pull requests. Line counts come from the
-        stored diff, so they describe what the pull request changed rather
-        than what the whole repository contains.
 
         Rows with no author are excluded: they are analyses stored before
         the author was carried through, and showing them as a contributor
@@ -239,23 +245,38 @@ class AnalysisResultRepository:
         """
         rows = await self._pool.fetch(
             """
+            WITH scoped AS (
+                SELECT *
+                FROM analysis_results
+                WHERE repository = $1
+                  AND author_username IS NOT NULL
+                  AND status = 'completed'
+            ),
+            latest AS (
+                SELECT DISTINCT ON (pull_request_number) *
+                FROM scoped
+                ORDER BY pull_request_number, completed_at DESC NULLS LAST, started_at DESC
+            ),
+            runs AS (
+                SELECT author_username, COUNT(*) AS analyses
+                FROM scoped
+                GROUP BY author_username
+            )
             SELECT
-                r.author_username                                   AS username,
-                MAX(r.author_provider_id)                           AS provider_user_id,
-                COUNT(DISTINCT r.pull_request_number)               AS pull_requests,
-                COUNT(*)                                            AS analyses,
-                MAX(r.completed_at)                                 AS last_analysis_at,
-                COALESCE(SUM((r.metrics ->> 'total_issues')::int), 0)         AS issues,
-                COALESCE(SUM((r.metrics ->> 'errors')::int), 0)               AS errors,
-                COALESCE(SUM((r.metrics ->> 'warnings')::int), 0)             AS warnings,
-                COALESCE(SUM((r.pull_request_changes ->> 'lines_added')::int), 0)   AS lines_added,
-                COALESCE(SUM((r.pull_request_changes ->> 'lines_removed')::int), 0) AS lines_removed,
-                COALESCE(SUM((r.pull_request_changes ->> 'files_changed')::int), 0) AS files_changed
-            FROM analysis_results r
-            WHERE r.repository = $1
-              AND r.author_username IS NOT NULL
-              AND r.status = 'completed'
-            GROUP BY r.author_username
+                l.author_username                                   AS username,
+                MAX(l.author_provider_id)                           AS provider_user_id,
+                COUNT(*)                                            AS pull_requests,
+                MAX(r.analyses)                                     AS analyses,
+                MAX(l.completed_at)                                 AS last_analysis_at,
+                COALESCE(SUM((l.metrics ->> 'total_issues')::int), 0)             AS issues,
+                COALESCE(SUM((l.metrics ->> 'errors')::int), 0)                   AS errors,
+                COALESCE(SUM((l.metrics ->> 'warnings')::int), 0)                 AS warnings,
+                COALESCE(SUM((l.pull_request_changes ->> 'lines_added')::int), 0)   AS lines_added,
+                COALESCE(SUM((l.pull_request_changes ->> 'lines_removed')::int), 0) AS lines_removed,
+                COALESCE(SUM((l.pull_request_changes ->> 'files_changed')::int), 0) AS files_changed
+            FROM latest l
+            JOIN runs r ON r.author_username = l.author_username
+            GROUP BY l.author_username
             ORDER BY pull_requests DESC, username ASC;
             """,
             repository,
@@ -266,6 +287,10 @@ class AnalysisResultRepository:
         """
         AI review findings per author, by severity.
 
+        Counted over the latest analysis of each pull request, like the
+        summary above: an issue reported on three pushes is one issue,
+        not three.
+
         Separate from contributor_summary because a review lives in its
         own table and its findings are a JSONB array: expanding that array
         multiplies rows, which would corrupt the totals in the query above
@@ -273,19 +298,25 @@ class AnalysisResultRepository:
         """
         rows = await self._pool.fetch(
             """
+            WITH latest AS (
+                SELECT DISTINCT ON (r.pull_request_number) r.result_id, r.author_username
+                FROM analysis_results r
+                WHERE r.repository = $1
+                  AND r.author_username IS NOT NULL
+                  AND r.status = 'completed'
+                ORDER BY r.pull_request_number, r.completed_at DESC NULLS LAST, r.started_at DESC
+            )
             SELECT
-                r.author_username                          AS username,
+                l.author_username                          AS username,
                 finding ->> 'severity'                     AS severity,
                 COUNT(*)                                   AS total
-            FROM analysis_results r
-            JOIN agent_reviews a ON a.result_id = r.result_id
+            FROM latest l
+            JOIN agent_reviews a ON a.result_id = l.result_id
             CROSS JOIN LATERAL jsonb_array_elements(
                 COALESCE(a.review -> 'findings', '[]'::jsonb)
             ) AS finding
-            WHERE r.repository = $1
-              AND r.author_username IS NOT NULL
-              AND a.status = 'completed'
-            GROUP BY r.author_username, finding ->> 'severity';
+            WHERE a.status = 'completed'
+            GROUP BY l.author_username, finding ->> 'severity';
             """,
             repository,
         )
