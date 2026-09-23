@@ -1,15 +1,45 @@
 # analyzers
 
-Tool adapters (Adapter Pattern) — one per static-analysis tool (ESLint,
-Pylint, Radon, Cppcheck), each implementing a shared analyzer contract:
-what command it executes, how Reviewdog receives its output, what output
-format is expected, how findings are normalized, and what capabilities it
-supports (languages, categories).
+Tool adapters (Adapter Pattern via the `Analyzer` Strategy interface), one
+per language: `EslintAnalyzer` (JavaScript/TypeScript) and `PythonAnalyzer`
+(Python — itself a composite over Pylint/Radon/Bandit, see `python/README.md`).
+Both are selected the same way, through `factories/analyzer_factory.py`,
+and run concurrently in a polyglot repository exactly like two JS/TS
+analyzers would.
 
-Reviewdog is the review/diagnostic aggregation and reporting layer sitting
-behind these adapters — this service owns orchestration and result
-processing; Reviewdog is not where business logic lives.
+- `Analyzer` (ABC) — `analyze(workspace, job)` (takes `job`, not just
+  `workspace`, because every `Finding` needs repository/PR/commit context
+  that only `AnalysisJob` carries).
+- **`EslintAnalyzer`** — runs against a fixed ruleset this service owns
+  (`tools/eslint/`), **never** the analyzed repository's own ESLint
+  config/devDependencies — running `npm install` against a
+  repo-controlled `package.json` (arbitrary postinstall scripts) would
+  undermine "never execute untrusted repository code directly on the
+  host." Includes Node + browser globals so ordinary builtins
+  (`console`, `require`, `window`, ...) aren't false-positived by
+  `no-undef`. Parses ESLint's own `--format json` output directly — no
+  external diagnostic-aggregation layer sits between ESLint and `Finding`
+  construction.
+- **`python/`** — Pylint (code quality) + Radon (complexity/
+  maintainability/Halstead/LOC) + Bandit (security), each independently
+  status-tracked (see `domain/analyzer_status.py`) and run concurrently.
+  Fully self-contained — see `python/README.md` for its own architecture,
+  exit-code semantics, and removal notes.
 
-Planned: Phase 5 (the analyzer interface/contract — Strategy Pattern for
-language-specific pipelines), Phase 6 (concrete ESLint/Pylint/Radon/
-Cppcheck adapters + Reviewdog integration).
+Two non-obvious things worth knowing:
+- **ESLint's nonzero exit code means "issues found," not "tool
+  crashed."** `process_runner.py` deliberately doesn't decide
+  success/failure by exit code itself — `EslintAnalyzer` treats 0 or 1 as
+  success; anything else is a genuine tool/config failure.
+- **`AnalysisMetrics` (complexity, cognitive complexity, code size) is
+  derived from ESLint rule-violation *messages***, not from a separate
+  complexity engine — see `../metrics/calculator.py` for the parsing and
+  the accuracy tradeoff that implies (only violating functions/files
+  contribute a measured value).
+
+`fingerprint` is left as `""` on every Finding produced here — computed
+by `application/finding_normalizer.py`, not here. `category` mapping
+(`eslint_analyzer.py`'s `_RULE_CATEGORY_MAP`) is deliberately not
+exhaustive across every eslint:recommended/typescript-eslint rule; it
+covers the rules `AnalysisMetrics` depends on plus a handful of clearly
+bug-shaped built-ins, and falls back to `code_smell` otherwise.

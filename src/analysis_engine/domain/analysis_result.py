@@ -4,42 +4,25 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
 
+from .agent_review import AgentReview
+from .change_set import PullRequestChanges
 from .finding import Finding
+from .metrics import AnalysisMetrics, FileStatistic, RuleStatistic
+from .python_metrics import PythonAnalysisResult
 
 AnalysisStatus = Literal["completed", "failed"]
-
-
-class SeverityCounts(BaseModel):
-    error: int = 0
-    warning: int = 0
-    info: int = 0
-
-
-class TechnicalDebtSummary(BaseModel):
-    """
-    Inputs for SQALE-based technical-debt calculation — the raw
-    ingredients (computed in Phase 8 by aggregating over `findings`), not
-    a final debt-ratio/rating. Deliberately not coupled to any specific
-    downstream rating formula: that belongs to a Technical Debt/Quality
-    service, per the spec's explicit instruction not to tie this engine to
-    the final dashboard representation.
-    """
-
-    total_remediation_minutes: int = 0
-    issue_count_by_severity: SeverityCounts = Field(default_factory=SeverityCounts)
-    issue_count_by_category: dict[str, int] = Field(default_factory=dict)
-    affected_files: int = 0
 
 
 class AnalysisResult(BaseModel):
     """
     The outcome of processing one AnalysisJob — one model with a status
     discriminator rather than separate Completed/Failed types, since a
-    failed run can still carry partial findings (e.g. some tools finished
-    before a timeout) that a completed-only model would need anyway.
+    failed run can still carry partial findings (e.g. the analyzer
+    finished before a timeout) that a completed-only model would need
+    anyway.
 
-    This is what gets persisted (Phase 9) and is the basis for the
-    analysis.completed / analysis.failed events published in Phase 10.
+    This is what gets persisted and is the basis for the
+    analysis.completed / analysis.failed events this service publishes.
     """
 
     result_id: UUID = Field(default_factory=uuid4)
@@ -48,10 +31,39 @@ class AnalysisResult(BaseModel):
     repository: str
     pull_request_number: int
     commit_sha: str
+    branch: str
 
     status: AnalysisStatus
     findings: list[Finding] = Field(default_factory=list)
-    technical_debt: TechnicalDebtSummary = Field(default_factory=TechnicalDebtSummary)
+
+    # Owned exclusively by this service — computed once in
+    # metrics/calculator.py from `findings` plus each analyzed file's line
+    # count. Every consumer (main-backend, web-interface) only ever
+    # displays these values, never recomputes them. JS/TS-specific (see
+    # metrics/file_scanner.py's extension set) — a Python-only repository
+    # leaves these at their zero-value defaults; `python` below is where
+    # Python's own equivalents live, kept separate rather than forced into
+    # this JS/TS-shaped model.
+    metrics: AnalysisMetrics = Field(default_factory=AnalysisMetrics)
+    rule_statistics: list[RuleStatistic] = Field(default_factory=list)
+    file_statistics: list[FileStatistic] = Field(default_factory=list)
+
+    # Populated only when the workspace contains Python (see
+    # factories/language_detector.py + analyzers/python/). None, not a
+    # zero-valued PythonAnalysisResult, when no Python was detected at
+    # all — that's a materially different fact than "Python was analyzed
+    # and every tool happened to fail".
+    python: PythonAnalysisResult | None = None
+
+    # What the pull request itself changed (see domain/change_set.py).
+    # None on results stored before this existed; otherwise always set,
+    # with status "unavailable" and a reason when the diff couldn't be
+    # worked out.
+    changes: PullRequestChanges | None = None
+
+    # The AI review, stored in its own table (agent_reviews) and attached
+    # when a result is read. None when no review was attempted.
+    review: AgentReview | None = None
 
     started_at: datetime
     completed_at: datetime | None = None
