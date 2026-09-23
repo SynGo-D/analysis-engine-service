@@ -27,6 +27,9 @@ def main() -> None:
     parser.add_argument("--concurrency", type=int, default=4)
     parser.add_argument("--max-cost", type=float, default=0.25, help="stop starting cases after this many USD")
     parser.add_argument("--no-verifier", action="store_true", help="report the Reviewer's issues without verification")
+    parser.add_argument("--save", action="store_true",
+                        help="store each case's result and review in the database, viewable in the dashboard at "
+                             "/developer/analysis/eval/<case-id>/1")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.WARNING, format="%(message)s")
@@ -46,9 +49,7 @@ def main() -> None:
     if provider is None:
         sys.exit("No OPENAI_API_KEY configured. Use --dry-run, or set the key in .env.")
 
-    scores, context_tokens = asyncio.run(
-        run_evaluation(cases, provider, concurrency=args.concurrency, max_total_cost_usd=args.max_cost)
-    )
+    scores, context_tokens = asyncio.run(_run(cases, provider, args))
     summary = summarise(scores)
     print(report(scores, summary, settings.reviewer_model, args.dry_run))
 
@@ -64,6 +65,27 @@ def main() -> None:
         tokens = sorted(context_tokens.values())
         if tokens:
             print(f"\n  context packs: {min(tokens)}–{max(tokens)} tokens (estimate)")
+
+
+async def _run(cases, provider, args):
+    if not args.save:
+        return await run_evaluation(cases, provider, concurrency=args.concurrency, max_total_cost_usd=args.max_cost)
+
+    import asyncpg
+
+    from ..infrastructure.schema import ensure_schema
+    from ..repositories.agent_review_repository import AgentReviewRepository
+    from ..repositories.analysis_result_repository import AnalysisResultRepository
+
+    pool = await asyncpg.create_pool(host=settings.db_host, port=settings.db_port, database=settings.db_name,
+                                     user=settings.db_user, password=settings.db_password)
+    try:
+        await ensure_schema(pool)
+        sinks = (AnalysisResultRepository(pool).save, AgentReviewRepository(pool).save)
+        return await run_evaluation(cases, provider, concurrency=args.concurrency,
+                                    max_total_cost_usd=args.max_cost, sinks=sinks)
+    finally:
+        await pool.close()
 
 
 if __name__ == "__main__":

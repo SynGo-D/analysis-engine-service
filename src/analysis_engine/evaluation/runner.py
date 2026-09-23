@@ -41,12 +41,14 @@ class DryRunProvider:
         return {"type": "function_call_output", "call_id": call_id, "output": output}
 
 
-async def run_case(case: Case, provider: LLMProvider) -> tuple[CaseScore, int]:
+async def run_case(case: Case, provider: LLMProvider, sinks=None) -> tuple[CaseScore, int]:
+    """`sinks`: optional (on_result, on_review) to store the run, e.g. for viewing it in the dashboard."""
     checkout = await asyncio.to_thread(CaseCheckout, case)
     try:
         orchestrator = AnalysisOrchestrator(workspace_manager=checkout,
                                             review_orchestrator=ReviewOrchestrator(provider))
-        result = await orchestrator.run(checkout.job())
+        on_result, on_review = sinks or (None, None)
+        result = await orchestrator.run(checkout.job(), on_result=on_result, on_review=on_review)
         review = result.review
         context_tokens = review.stats.context_tokens_estimate if review and review.stats else 0
         return score_case(case, review), context_tokens
@@ -59,6 +61,7 @@ async def run_evaluation(
     provider: LLMProvider,
     concurrency: int = 4,
     max_total_cost_usd: float = 0.25,
+    sinks=None,
 ) -> tuple[list[CaseScore], dict[str, int]]:
     """
     Runs every case, a few at a time. Once the money spent reaches
@@ -77,7 +80,7 @@ async def run_evaluation(
                 scores[case.id] = CaseScore(case_id=case.id, clean=case.is_clean, status="not_run",
                                             expected=len(case.expected), error="evaluation cost cap reached")
                 return
-            score, tokens = await run_case(case, provider)
+            score, tokens = await run_case(case, provider, sinks)
             spent += score.cost_usd
             scores[case.id] = score
             context_tokens[case.id] = tokens
