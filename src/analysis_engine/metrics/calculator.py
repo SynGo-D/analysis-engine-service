@@ -12,16 +12,60 @@ from ..domain import (
     RuleStatistic,
 )
 
-# Each of these parses the actual measured value back out of the ESLint
-# rule-violation message that reported it — see tools/eslint/
-# eslint.config.cjs for the exact wording each rule produces. This is the
-# only place in the service that does this parsing; nothing downstream
-# repeats it.
-_COMPLEXITY_VALUE = re.compile(r"has a complexity of (\d+)")
-_COGNITIVE_COMPLEXITY_VALUE = re.compile(r"Cognitive Complexity from (\d+) to")
-_FUNCTION_LINES_VALUE = re.compile(r"has too many lines \((\d+)\)")
+# Each of these parses the actual measured value back out of the rule
+# violation that reported it — see tools/eslint/eslint.config.cjs and
+# tools/pmd/ruleset.xml for the exact wording each tool produces. This is
+# the only place in the service that does this parsing; nothing
+# downstream repeats it.
+#
+# One pattern per tool per metric rather than one clever combined regex:
+# the wordings have nothing in common, and a single pattern that matched
+# both would match neither clearly.
+_COMPLEXITY_VALUE = re.compile(
+    r"has a complexity of (\d+)"                 # eslint: complexity
+    r"|has a cyclomatic complexity of (\d+)"     # pmd: CyclomaticComplexity
+)
+_COGNITIVE_COMPLEXITY_VALUE = re.compile(
+    r"Cognitive Complexity from (\d+) to"        # eslint: sonarjs
+    r"|has a cognitive complexity of (\d+)"      # pmd: CognitiveComplexity
+)
+_FUNCTION_LINES_VALUE = re.compile(
+    r"has too many lines \((\d+)\)"             # eslint: max-lines-per-function
+    r"|method '[^']*' has a NCSS line count of (\d+)"   # pmd: NcssCount, method
+)
 
-_UNUSED_VARIABLE_RULES = {"no-unused-vars", "@typescript-eslint/no-unused-vars"}
+# PMD reports class and method sizes through the same NcssCount rule,
+# distinguished only by how the message starts, so the two are separated
+# here rather than by rule id.
+_CLASS_LINES_VALUE = re.compile(r"class '[^']*' has a NCSS line count of (\d+)")
+
+_COMPLEXITY_RULES = {"complexity", "CyclomaticComplexity"}
+_COGNITIVE_COMPLEXITY_RULES = {"sonarjs/cognitive-complexity", "CognitiveComplexity"}
+_FUNCTION_LINES_RULES = {"max-lines-per-function", "NcssCount"}
+
+_UNUSED_VARIABLE_RULES = {
+    "no-unused-vars", "@typescript-eslint/no-unused-vars",          # eslint
+    "UnusedLocalVariable", "UnusedPrivateField", "UnusedAssignment",  # pmd
+    "UnusedPrivateMethod", "UnusedFormalParameter",
+}
+
+# Java's compiler rejects unreachable statements outright, so PMD has no
+# equivalent of no-unreachable and this count is structurally zero for
+# Java — absent by construction, not by omission.
+_UNREACHABLE_CODE_RULES = {"no-unreachable"}
+
+
+def _measured(pattern: re.Pattern[str], message: str) -> int | None:
+    """
+    The first numeric group that matched. The alternations above put each
+    tool's wording in its own group, so exactly one is ever populated.
+    """
+    match = pattern.search(message)
+    if match is None:
+        return None
+
+    value = next((group for group in match.groups() if group is not None), None)
+    return int(value) if value is not None else None
 
 
 def calculate_metrics(findings: list[Finding], file_lines: dict[str, int]) -> AnalysisMetrics:
@@ -40,20 +84,28 @@ def calculate_metrics(findings: list[Finding], file_lines: dict[str, int]) -> An
     kloc = loc / 1000 if loc else 0.0
 
     complexity_values = [
-        int(match.group(1))
-        for f in findings if f.rule_id == "complexity"
-        if (match := _COMPLEXITY_VALUE.search(f.message))
+        value
+        for f in findings if f.rule_id in _COMPLEXITY_RULES
+        if (value := _measured(_COMPLEXITY_VALUE, f.message)) is not None
     ]
     cognitive_values = [
-        int(match.group(1))
-        for f in findings if f.rule_id == "sonarjs/cognitive-complexity"
-        if (match := _COGNITIVE_COMPLEXITY_VALUE.search(f.message))
+        value
+        for f in findings if f.rule_id in _COGNITIVE_COMPLEXITY_RULES
+        if (value := _measured(_COGNITIVE_COMPLEXITY_VALUE, f.message)) is not None
     ]
     function_line_values = [
-        int(match.group(1))
-        for f in findings if f.rule_id == "max-lines-per-function"
-        if (match := _FUNCTION_LINES_VALUE.search(f.message))
+        value
+        for f in findings if f.rule_id in _FUNCTION_LINES_RULES
+        if (value := _measured(_FUNCTION_LINES_VALUE, f.message)) is not None
     ]
+    # PMD reports an oversized class through NcssCount as well, so a
+    # file-size violation is either ESLint's max-lines or the class-shaped
+    # half of NcssCount.
+    file_line_violations = sum(
+        1 for f in findings
+        if f.rule_id == "max-lines"
+        or (f.rule_id == "NcssCount" and _CLASS_LINES_VALUE.search(f.message))
+    )
 
     return AnalysisMetrics(
         files_analyzed=len(file_lines),
@@ -77,12 +129,12 @@ def calculate_metrics(findings: list[Finding], file_lines: dict[str, int]) -> An
         size=SizeMetrics(
             largest_file_lines=max(file_lines.values()) if file_lines else 0,
             largest_function_lines=max(function_line_values) if function_line_values else None,
-            max_lines_violations=sum(1 for f in findings if f.rule_id == "max-lines"),
+            max_lines_violations=file_line_violations,
             max_lines_per_function_violations=len(function_line_values),
         ),
         unused_code=UnusedCodeMetrics(
             unused_variables=sum(1 for f in findings if f.rule_id in _UNUSED_VARIABLE_RULES),
-            unreachable_code=sum(1 for f in findings if f.rule_id == "no-unreachable"),
+            unreachable_code=sum(1 for f in findings if f.rule_id in _UNREACHABLE_CODE_RULES),
         ),
     )
 

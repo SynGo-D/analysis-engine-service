@@ -1,16 +1,20 @@
-# Reproducible runtime for both toolchains this service shells out to:
+# Reproducible runtime for the three toolchains this service shells out to:
 # - Python: Pylint/Radon/Bandit, installed as pinned dependencies via
 #   pyproject.toml (see analyzers/python/README.md for exact versions).
 # - Node.js: ESLint, installed via tools/eslint/'s own package.json (see
 #   analyzers/README.md) — never the analyzed repository's own toolchain,
-#   for either language.
+#   for any language.
+# - Java: PMD, a pinned distribution unpacked below. PMD is a Java
+#   program, so a headless JRE comes with it; it reads source and never
+#   compiles, which is why it is used rather than SpotBugs (bytecode, and
+#   therefore a full Maven build with the repository's own plugins).
 #
 # git is required too: workspace/git_client.py shells out to the real git
 # binary to clone/checkout the analyzed repository.
 FROM python:3.12-slim
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends git curl gnupg \
+    && apt-get install -y --no-install-recommends git curl gnupg unzip default-jre-headless \
     && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
@@ -36,6 +40,20 @@ RUN mkdir -p src/analysis_engine \
 # ESLint's own dedicated toolchain (never the analyzed repository's).
 COPY tools/eslint/package.json tools/eslint/package-lock.json tools/eslint/
 RUN cd tools/eslint && npm ci
+
+# PMD, pinned like every other analyzer in this service: its output
+# wording is parsed to derive the complexity and size metrics, so a
+# version that rephrases a rule would silently empty a dashboard panel.
+ARG PMD_VERSION=7.18.0
+# mkdir first: this layer runs before `COPY . .`, so tools/pmd/ does not
+# exist yet.
+RUN mkdir -p /app/tools/pmd \
+    && curl -fsSL -o /tmp/pmd.zip \
+        "https://github.com/pmd/pmd/releases/download/pmd_releases%2F${PMD_VERSION}/pmd-dist-${PMD_VERSION}-bin.zip" \
+    && unzip -q /tmp/pmd.zip -d /tmp/pmd \
+    && mv "/tmp/pmd/pmd-bin-${PMD_VERSION}" /app/tools/pmd/pmd-bin \
+    && rm -rf /tmp/pmd.zip /tmp/pmd \
+    && /app/tools/pmd/pmd-bin/bin/pmd --version
 
 COPY . .
 # Re-run install now that the real source is present (editable install

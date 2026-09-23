@@ -5,4 +5,8 @@ __pycache__
 .git
 tests
 tools/eslint/node_modules
+# PMD's distribution, for the same reason: the image downloads its own
+# pinned copy, and shipping a 75MB local one through the build context
+# only slows the build down.
+tools/pmd/pmd-bin
 .env

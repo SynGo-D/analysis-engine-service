@@ -13,5 +13,10 @@ build/
 # (reproducible installs), only node_modules/ itself is ignored.
 tools/eslint/node_modules/
 
+# PMD's distribution — same reasoning as ESLint's node_modules: it is a
+# downloaded toolchain, not source. The Dockerfile fetches a pinned
+# version; see tools/pmd/README.md for the local install.
+tools/pmd/pmd-bin/
+
 # Evaluation runs (analysis_engine.evaluation) — local comparison data
 evaluation-results/

@@ -1,10 +1,11 @@
-from ..analyzers import Analyzer, EslintAnalyzer, PythonAnalyzer
+from ..analyzers import Analyzer, EslintAnalyzer, JavaAnalyzer, PythonAnalyzer
 
 # Adding a new tool/language means implementing the Analyzer interface
 # once and adding it here — nothing else in this file, or the
 # orchestrator, needs to change.
 _ALL_ANALYZERS: tuple[type[Analyzer], ...] = (
     EslintAnalyzer,
+    JavaAnalyzer,
     PythonAnalyzer,
 )
 
@@ -15,8 +16,9 @@ class AnalyzerFactory:
     (Factory Pattern). Multiple analyzers can apply to the same language
     in principle (kept list-shaped, not single-instance-returning, for
     that reason) — currently one analyzer per language: EslintAnalyzer
-    for JS/TS, PythonAnalyzer (itself a composite over Pylint/Radon/
-    Bandit — see analyzers/python/python_analyzer.py) for Python.
+    for JS/TS, JavaAnalyzer (PMD) for Java, PythonAnalyzer (itself a
+    composite over Pylint/Radon/Bandit — see
+    analyzers/python/python_analyzer.py) for Python.
     """
 
     def create_for_languages(self, languages: frozenset[str]) -> list[Analyzer]:

@@ -147,3 +147,92 @@ def test_calculate_file_statistics_includes_clean_files_with_zero_findings():
     assert by_path["src/clean.ts"].errors == 0
     assert by_path["src/clean.ts"].issues == 0
     assert by_path["src/clean.ts"].loc == 50
+
+
+# ---------------------------------------------------------------------------
+# Java (PMD)
+# ---------------------------------------------------------------------------
+# The messages below are copied verbatim from PMD 7.18 output, because
+# the metrics are parsed back out of that exact wording — if PMD rephrases
+# a rule, these tests are what notices.
+
+def _pmd(rule: str, message: str, severity: str = "warning") -> Finding:
+    return Finding(
+        repository="owner/repo", pull_request_number=1, commit_sha="a" * 40,
+        file_path="src/main/java/Service.java", line=42, column=5,
+        severity=severity, category="complexity", rule_id=rule,
+        message=message, tool="pmd", fingerprint="",
+    )
+
+
+def test_pmd_cyclomatic_complexity_is_measured():
+    findings = [
+        _pmd("CyclomaticComplexity", "The method 'transfer(int, int)' has a cyclomatic complexity of 14."),
+        _pmd("CyclomaticComplexity", "The method 'audit()' has a cyclomatic complexity of 8."),
+    ]
+
+    metrics = calculate_metrics(findings, {"src/main/java/Service.java": 300})
+
+    assert metrics.complexity.violations == 2
+    assert metrics.complexity.maximum == 14
+    assert metrics.complexity.average == 11.0
+
+
+def test_pmd_cognitive_complexity_is_measured():
+    findings = [_pmd(
+        "CognitiveComplexity",
+        "The method 'transfer(int, int)' has a cognitive complexity of 16, current threshold is 15",
+    )]
+
+    metrics = calculate_metrics(findings, {"src/main/java/Service.java": 300})
+
+    assert metrics.cognitive_complexity.violations == 1
+    assert metrics.cognitive_complexity.maximum == 16
+
+
+def test_pmd_ncss_separates_methods_from_classes():
+    """One rule reports both; only the wording tells them apart."""
+    findings = [
+        _pmd("NcssCount", "The method 'transfer(int, int)' has a NCSS line count of 33."),
+        _pmd("NcssCount", "The class 'TransactionService' has a NCSS line count of 250 (Highest = 33)."),
+    ]
+
+    metrics = calculate_metrics(findings, {"src/main/java/Service.java": 300})
+
+    assert metrics.size.largest_function_lines == 33
+    assert metrics.size.max_lines_per_function_violations == 1
+    assert metrics.size.max_lines_violations == 1
+
+
+def test_pmd_unused_code_is_counted():
+    findings = [
+        _pmd("UnusedLocalVariable", "Avoid unused local variables such as 'temp'."),
+        _pmd("UnusedPrivateField", "Avoid unused private fields such as 'cache'."),
+    ]
+
+    metrics = calculate_metrics(findings, {"src/main/java/Service.java": 300})
+
+    assert metrics.unused_code.unused_variables == 2
+    # Java's compiler rejects unreachable statements, so PMD has no
+    # equivalent rule and this is structurally zero rather than missing.
+    assert metrics.unused_code.unreachable_code == 0
+
+
+def test_eslint_and_pmd_metrics_combine_in_one_result():
+    """A repository can hold both languages; neither tool's numbers are lost."""
+    findings = [
+        Finding(
+            repository="owner/repo", pull_request_number=1, commit_sha="a" * 40,
+            file_path="src/app.ts", line=1, column=1, severity="warning",
+            category="complexity", rule_id="complexity",
+            message="Function 'handler' has a complexity of 21. Maximum allowed is 20.",
+            tool="eslint", fingerprint="",
+        ),
+        _pmd("CyclomaticComplexity", "The method 'transfer(int, int)' has a cyclomatic complexity of 9."),
+    ]
+
+    metrics = calculate_metrics(findings, {"src/app.ts": 100, "src/main/java/Service.java": 200})
+
+    assert metrics.complexity.violations == 2
+    assert metrics.complexity.maximum == 21
+    assert metrics.files_analyzed == 2
