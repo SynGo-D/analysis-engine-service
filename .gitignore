@@ -7,3 +7,11 @@ venv/
 dist/
 build/
 .pytest_cache/
+
+# ESLint's own toolchain — not source, installed via tools/eslint's own
+# npm install (see README.md). package-lock.json IS committed
+# (reproducible installs), only node_modules/ itself is ignored.
+tools/eslint/node_modules/
+
+# Evaluation runs (analysis_engine.evaluation) — local comparison data
+evaluation-results/

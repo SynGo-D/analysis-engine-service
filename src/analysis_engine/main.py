@@ -2,12 +2,25 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from .application.orchestrator import AnalysisOrchestrator
+from .config import settings
 from .consumers.pr_queue_consumer import PRQueueConsumer
 from .infrastructure.database import connect_database
 from .infrastructure.rabbitmq import connect_rabbitmq, create_channel
+from .infrastructure.schema import ensure_schema
+from .repositories.agent_review_repository import AgentReviewRepository
+from .repositories.business_rule_repository import BusinessRuleRepository
+from .repositories.feedback_repository import FeedbackRepository
+from .repositories.analysis_result_repository import AnalysisResultRepository
+from .review import ReviewOrchestrator, build_default_provider
+from .workspace import WorkspaceManager, default_credentials
 from .api.health import router as health_router
+from .api.analysis import router as analysis_router
+from .api.analysis import usage_router
+from .api.rules import router as rules_router
+from .rules.mining import RuleMiner
 
 logging.basicConfig(
     level=logging.INFO,
@@ -23,11 +36,41 @@ async def lifespan(app: FastAPI):
     for dependency composition, replacing the older @app.on_event hooks.
     """
     app.state.db_pool = await connect_database()
+    await ensure_schema(app.state.db_pool)
+
+    app.state.analysis_result_repository = AnalysisResultRepository(app.state.db_pool)
+
     app.state.rabbitmq_connection = await connect_rabbitmq()
     app.state.rabbitmq_channel = await create_channel(app.state.rabbitmq_connection)
 
-    orchestrator = AnalysisOrchestrator()
-    consumer = PRQueueConsumer(orchestrator)
+    # AI review only when a provider is configured (OPENAI_API_KEY); without
+    # one, reviews are recorded as skipped/"disabled" and linting is unchanged.
+    provider = build_default_provider()
+    logging.getLogger(__name__).info(
+        "AI review: %s", f"enabled ({settings.reviewer_model})" if provider else "disabled (no OPENAI_API_KEY)"
+    )
+    app.state.business_rule_repository = BusinessRuleRepository(app.state.db_pool)
+    app.state.feedback_repository = FeedbackRepository(app.state.db_pool)
+    # Private repositories: clone tokens from integration-service. Without
+    # INTERNAL_SERVICE_TOKEN, clones are anonymous (public repositories only).
+    credentials = default_credentials()
+    logging.getLogger(__name__).info(
+        "Private repositories: %s", "enabled (tokens from integration-service)" if credentials else
+        "disabled (no INTERNAL_SERVICE_TOKEN): public repositories only"
+    )
+    workspaces = WorkspaceManager(credentials=credentials)
+    app.state.rule_miner = RuleMiner(provider, workspace_manager=workspaces) if provider else None
+    orchestrator = AnalysisOrchestrator(
+        workspace_manager=workspaces,
+        review_orchestrator=ReviewOrchestrator(
+            provider,
+            rule_source=app.state.business_rule_repository,
+            feedback_source=app.state.feedback_repository,
+        )
+    )
+    consumer = PRQueueConsumer(
+        orchestrator, app.state.analysis_result_repository, AgentReviewRepository(app.state.db_pool)
+    )
     await consumer.start(app.state.rabbitmq_channel)
 
     yield
@@ -39,4 +82,17 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Analysis Engine", lifespan=lifespan)
 
+# Findings are read directly by the browser (web-interface calls this
+# service the same way it calls integration-service — see lib/api.ts),
+# so this needs real CORS, not just server-to-server access.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[settings.frontend_origin],
+    allow_methods=["GET"],
+    allow_headers=["*"],
+)
+
 app.include_router(health_router)
+app.include_router(analysis_router)
+app.include_router(rules_router)
+app.include_router(usage_router)

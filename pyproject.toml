@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "analysis-engine"
 version = "1.0.0"
-description = "Analysis Engine microservice for the CodePulse platform — consumes normalized PR/MR jobs from RabbitMQ, runs static-analysis tools through Reviewdog, and publishes analysis results."
+description = "Analysis Engine microservice for the CodePulse platform — an ESLint (JavaScript/TypeScript) and Pylint/Radon/Bandit (Python) code-quality analyzer that consumes normalized PR/MR jobs from RabbitMQ and publishes analysis results with quality metrics."
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115",
@@ -13,6 +13,33 @@ dependencies = [
     "pydantic-settings>=2.6",
     "asyncpg>=0.30",
     "aio-pika>=9.5",
+    # ESLint itself isn't a Python package — it's this service's own
+    # dedicated npm toolchain, see tools/eslint/.
+    #
+    # Pylint/Radon/Bandit ARE Python packages, run as subprocesses the
+    # same way ESLint is (never imported as a library — see
+    # analyzers/python/README.md) — pinned exactly, not >=, so a
+    # reproducible build never silently picks up a newer major version
+    # with different output/exit-code behavior than what
+    # analyzers/python/ was written and tested against.
+    "pylint==4.0.8",
+    "radon==6.0.1",
+    "bandit==1.9.4",
+    # Repository indexing (see indexing/README.md) — parses source into a
+    # symbol/call graph so review has whole-repo context instead of one
+    # file at a time. Pinned for the same reason the analyzers are: the
+    # indexer reads grammar-specific AST node type names, which a grammar
+    # major version can rename.
+    "tree-sitter==0.26.0",
+    "tree-sitter-python==0.25.0",
+    "tree-sitter-javascript==0.25.0",
+    "tree-sitter-typescript==0.23.2",
+    # AI review agents (see docs/agent-architecture.md). Pinned like the
+    # analyzers: the provider adapter parses this SDK's response types,
+    # which a major version can change.
+    "openai==3.16.2",
+    # Business rules files (.codepulse/rules.yml), parsed with safe_load only.
+    "pyyaml==6.0.3",
 ]
 
 [project.optional-dependencies]
@@ -24,3 +51,8 @@ dev = [
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: runs real analyzer subprocesses (pylint/radon/bandit/eslint) rather than mocking them — needs each tool's toolchain installed.",
+]

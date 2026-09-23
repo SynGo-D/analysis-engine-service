@@ -1,4 +1,31 @@
 services:
+  # Optional — the app itself doesn't have to run containerized; `uvicorn
+  # analysis_engine.main:app` (README.md) works identically outside
+  # Docker. This exists so Python (Pylint/Radon/Bandit) + Node (ESLint)
+  # analysis runs reproducibly regardless of what's installed on the host
+  # — see Dockerfile for exact pinned versions.
+  analysis-engine:
+    build: .
+    container_name: analysis-engine
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: analysis_engine_db
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      # Must point at the same shared broker webhook-listener publishes
+      # to — override for your environment (see docker-compose.yml's own
+      # note on the postgres service below for why no rabbitmq service
+      # is defined in this file).
+      RABBITMQ_URL: ${RABBITMQ_URL:-amqp://guest:guest@host.docker.internal:5672}
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:3000}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   postgres:
     image: postgres:16-alpine
     container_name: analysis-engine-postgres
