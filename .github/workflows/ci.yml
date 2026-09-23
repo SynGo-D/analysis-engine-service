@@ -1,0 +1,98 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Tests
+    runs-on: ubuntu-latest
+
+    # Part of the suite is marked `integration` and stores a real analysis
+    # result through the real schema, because the JSONB columns are exactly
+    # where a silent coercion would hide. Those tests need a database, and
+    # they create their own schema, so an empty Postgres is enough.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: analysis_engine_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      # This service analyses JavaScript as well as Python, and part of the
+      # suite runs the real ESLint rather than a mock (the `integration`
+      # marker in pyproject.toml). That toolchain is this service's own,
+      # never the analysed repository's.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: tools/eslint/package-lock.json
+
+      - name: Install ESLint toolchain
+        run: npm ci
+        working-directory: tools/eslint
+
+      - name: Install
+        run: pip install -e ".[dev]"
+
+      # Settings has no defaults for the database fields, on purpose: the
+      # service refuses to start half-configured. That check runs at import
+      # time, so the suite needs them present even though no unit test
+      # opens a connection — locally they come from .env, which is not in
+      # the repository.
+      #
+      # No OPENAI_API_KEY is set, deliberately. The agent tests stub the
+      # provider; if one ever reaches the real API it will fail here rather
+      # than quietly spending money on every push.
+      - name: Tests
+        run: pytest -q
+        env:
+          DB_HOST: localhost
+          DB_NAME: analysis_engine_test
+          DB_USER: ci
+          DB_PASSWORD: ci
+
+  image:
+    name: Container image
+    needs: check
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          tags: analysis-engine:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
