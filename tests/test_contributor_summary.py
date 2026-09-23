@@ -89,17 +89,42 @@ async def test_groups_work_by_author(repository):
 @pytest.mark.asyncio
 async def test_a_re_analysed_pull_request_counts_once(repository):
     """
-    A pull request is analysed again on every push. Counting rows would
-    report someone who pushed four times as having opened four pull
-    requests.
+    A pull request is analysed again on every push, and each run stores
+    the whole diff against the target branch rather than just what that
+    push added.
+
+    So every figure except the analysis count has to come from the latest
+    run alone. Summing the runs would report someone who pushed four
+    times as having written four times the code and introduced four times
+    the issues — an error that grows with how often they push, which is
+    precisely backwards.
     """
-    for _ in range(4):
-        await repository.save(_result("amara", 10, issues=1, errors=0, added=5, removed=1, files=1))
+    for minutes_ago in (40, 30, 20, 10):
+        await repository.save(_result(
+            "amara", 10, issues=1, errors=0, added=5, removed=1, files=1, minutes_ago=minutes_ago,
+        ))
 
     row = next(r for r in await repository.contributor_summary(REPOSITORY) if r["username"] == "amara")
 
     assert row["pull_requests"] == 1
-    assert row["analyses"] == 4
+    assert row["analyses"] == 4      # every run counted
+    assert row["lines_added"] == 5   # but the diff counted once
+    assert row["lines_removed"] == 1
+    assert row["files_changed"] == 1
+    assert row["issues"] == 1
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_the_latest_analysis_of_a_pull_request_wins(repository):
+    """A pull request that grew between pushes reports its current size."""
+    await repository.save(_result("amara", 11, issues=9, errors=4, added=10, removed=2, files=1, minutes_ago=30))
+    await repository.save(_result("amara", 11, issues=2, errors=1, added=80, removed=20, files=5, minutes_ago=5))
+
+    row = next(r for r in await repository.contributor_summary(REPOSITORY) if r["username"] == "amara")
+
+    assert row["lines_added"] == 80
+    assert row["issues"] == 2
 
 
 @pytest.mark.integration
