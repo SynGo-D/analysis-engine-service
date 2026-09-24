@@ -20,6 +20,7 @@ from .api.health import router as health_router
 from .api.analysis import router as analysis_router
 from .api.analysis import usage_router
 from .api.contributors import router as contributors_router
+from .api.timings import router as timings_router
 from .api.rules import router as rules_router
 from .rules.mining import RuleMiner
 
@@ -97,4 +98,5 @@ app.include_router(health_router)
 app.include_router(analysis_router)
 app.include_router(rules_router)
 app.include_router(contributors_router)
+app.include_router(timings_router)
 app.include_router(usage_router)

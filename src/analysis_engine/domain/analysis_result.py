@@ -72,6 +72,11 @@ class AnalysisResult(BaseModel):
     # when a result is read. None when no review was attempted.
     review: AgentReview | None = None
 
+    # Milliseconds per pipeline stage — see application/phase_timer.py.
+    # Empty for results stored before this was measured, and for any job
+    # that failed before the stages ran.
+    timings: dict[str, int] = Field(default_factory=dict)
+
     started_at: datetime
     completed_at: datetime | None = None
 
