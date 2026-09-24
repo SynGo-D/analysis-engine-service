@@ -81,6 +81,11 @@ class PRQueueConsumer:
                 on_result=self._repository.save,
                 on_review=self._review_repository.save if self._review_repository else None,
             )
+            # After run() returns, because the timings include the AI
+            # review and the total, neither of which exists when the
+            # result is first saved.
+            await self._repository.update_timings(result.result_id, result.timings)
+
             await message.ack()
             self._log_result(job, result)
 
