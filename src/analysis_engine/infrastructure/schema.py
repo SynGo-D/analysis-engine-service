@@ -51,6 +51,11 @@ ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS pull_request_changes JSONB
 -- Who opened the pull request. Nullable rather than defaulted: rows
 -- written before this existed genuinely have no author, and an empty
 -- string would be indistinguishable from a real one.
+-- Milliseconds per pipeline stage. JSONB rather than a column per stage:
+-- the stages change as the pipeline does, and these are read back whole
+-- for one job or aggregated by key, never filtered on individually.
+ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS timings JSONB NOT NULL DEFAULT '{}'::jsonb;
+
 ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS author_username TEXT;
 ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS author_provider_id TEXT;
 

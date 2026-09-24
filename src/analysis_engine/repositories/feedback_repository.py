@@ -93,6 +93,16 @@ class FeedbackRepository:
             "feedback": counts,
             # The share of rated issues developers called wrong: the real
             # false-alarm rate, as opposed to the evaluation harness's estimate.
+            #
+            # Reported next to how many issues were rated at all, because
+            # only rated issues are in that denominator. One person rating
+            # one issue "wrong" out of two hundred reported reads as a 100%
+            # false-alarm rate, which is the opposite of what happened.
+            # Neither number means much without the other.
             "wrong_rate": round(counts["wrong"] / rated, 3) if rated else None,
             "useful_rate": round(counts["useful"] / rated, 3) if rated else None,
+            "rated": rated,
+            "response_rate": (
+                round(rated / reviews["issues_reported"], 3) if reviews["issues_reported"] else None
+            ),
         }

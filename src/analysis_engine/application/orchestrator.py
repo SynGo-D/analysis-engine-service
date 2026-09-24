@@ -1,9 +1,11 @@
 import asyncio
 import logging
+from time import monotonic
 from datetime import datetime, timezone
 from typing import Awaitable, Callable
 
 from .finding_normalizer import FindingNormalizer
+from .phase_timer import PhaseTimer
 from ..analyzers import Analyzer
 from ..diffing import DiffExtractor, changed_symbols, mark_findings
 from ..domain import AgentReview, AnalysisJob, AnalysisResult, Finding, PullRequestChanges, PythonAnalysisResult
@@ -70,9 +72,25 @@ class AnalysisOrchestrator:
         called when the review starts and again when it ends.
         """
         started_at = datetime.now(timezone.utc)
+        timer = PhaseTimer()
+
+        # How long this job sat in the queue before anything looked at it.
+        # Measured across two services' clocks, so it is a rough figure and
+        # a negative one means they disagree rather than time running
+        # backwards — clamped to zero rather than reported as nonsense.
+        timer.record("queue_wait", self._queue_wait_ms(job))
+
+        # Timed by the clock rather than by wrapping the context manager:
+        # taking `async with` apart to measure its exit would change what
+        # happens to an exception on the way out, which is not a trade
+        # worth making to time a temporary directory being deleted.
+        prepare_started = monotonic()
 
         async with self._workspace_manager.prepare(job) as workspace:
-            languages = detect_languages(workspace.path)
+            timer.record("workspace", int((monotonic() - prepare_started) * 1000))
+
+            with timer.phase("detect_languages"):
+                languages = detect_languages(workspace.path)
             logger.info("[job:%s] detected languages: %s", job.job_id, sorted(languages))
 
             analyzers = self._analyzer_factory.create_for_languages(languages)
@@ -86,32 +104,68 @@ class AnalysisOrchestrator:
             # alongside them: it only fetches into .git, which no analyzer
             # reads, and its network round trip would otherwise add
             # straight to the job's duration.
-            results, (changes, index) = await asyncio.gather(
-                asyncio.gather(
-                    *(analyzer.analyze(workspace, job) for analyzer in analyzers),
-                    return_exceptions=True,
-                ),
-                self._extract_changes(workspace.path, job, workspace.git_env),
-            )
+            # Timed as one phase because they run concurrently: the wall
+            # clock here is what the job actually waits for, which is the
+            # slower of the two, not their sum.
+            with timer.phase("analyze_and_diff"):
+                results, (changes, index) = await asyncio.gather(
+                    asyncio.gather(
+                        *(analyzer.analyze(workspace, job) for analyzer in analyzers),
+                        return_exceptions=True,
+                    ),
+                    self._extract_changes(workspace.path, job, workspace.git_env),
+                )
 
             # Must happen before the workspace context exits — the temp
             # checkout is deleted as soon as it does, and AnalysisMetrics
             # needs each file's line count independent of any analyzer's
             # output. Scoped to the detected languages so the density
             # figures are measured against the code that was analyzed.
-            file_lines = scan_source_files(workspace.path, languages)
+            with timer.phase("count_lines"):
+                file_lines = scan_source_files(workspace.path, languages)
 
-            result = self._build_result(job, analyzers, results, changes, file_lines, started_at)
+            with timer.phase("build_result"):
+                result = self._build_result(job, analyzers, results, changes, file_lines, started_at)
+
             if on_result is not None:
-                await on_result(result)
+                with timer.phase("save_result"):
+                    await on_result(result)
 
             # Stage 2 runs inside the workspace block on purpose: the
             # Reviewer's tools read the checkout, which is deleted as soon
             # as this block exits.
             if self._review_orchestrator is not None and result.status == "completed":
-                result.review = await self._run_review(workspace.path, job, result, index, on_review)
+                with timer.phase("ai_review"):
+                    result.review = await self._run_review(
+                        workspace.path, job, result, index, on_review
+                    )
+        timer.record("total", int((datetime.now(timezone.utc) - started_at).total_seconds() * 1000))
+        result.timings = timer.as_dict()
+
+        logger.info(
+            "[job:%s] timings: %s",
+            job.job_id,
+            " ".join(f"{name}={ms}ms" for name, ms in result.timings.items()),
+        )
 
         return result
+
+    @staticmethod
+    def _queue_wait_ms(job: AnalysisJob) -> int:
+        """
+        Between webhook-listener queueing the job and this service picking
+        it up. Zero when the timestamp is missing or unparsable — an
+        unknown wait is better reported as nothing than as a guess.
+        """
+        try:
+            queued_at = datetime.fromisoformat(job.queued_at.replace("Z", "+00:00"))
+        except (AttributeError, ValueError):
+            return 0
+
+        if queued_at.tzinfo is None:
+            queued_at = queued_at.replace(tzinfo=timezone.utc)
+
+        return max(0, int((job.received_at - queued_at).total_seconds() * 1000))
 
     def _build_result(self, job, analyzers, results, changes, file_lines, started_at) -> AnalysisResult:
         raw_findings, failed_tools = self._collect_results(analyzers, results, job)

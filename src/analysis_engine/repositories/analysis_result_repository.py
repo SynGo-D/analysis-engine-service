@@ -42,9 +42,9 @@ class AnalysisResultRepository:
                         commit_sha, branch, status, error_message, metrics,
                         rule_statistics, file_statistics, python_result,
                         pull_request_changes, started_at, completed_at,
-                        author_username, author_provider_id
+                        author_username, author_provider_id, timings
                     )
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
                     ON CONFLICT (result_id) DO NOTHING;
                     """,
                     result.result_id,
@@ -64,6 +64,7 @@ class AnalysisResultRepository:
                     result.completed_at,
                     result.author_username,
                     result.author_provider_id,
+                    json.dumps(result.timings),
                 )
 
                 if result.findings:
@@ -192,6 +193,7 @@ class AnalysisResultRepository:
                 PullRequestChanges.model_validate_json(row["pull_request_changes"])
                 if row["pull_request_changes"] else None
             ),
+            timings=json.loads(row["timings"]) if row["timings"] else {},
             started_at=row["started_at"],
             completed_at=row["completed_at"],
             error_message=row["error_message"],
@@ -325,3 +327,58 @@ class AnalysisResultRepository:
         for row in rows:
             by_author.setdefault(row["username"], {})[row["severity"] or "unknown"] = row["total"]
         return by_author
+
+    async def timing_percentiles(self, repository: str | None, days: int) -> dict:
+        """
+        p50 and p95 for each pipeline stage, over the last `days` days.
+
+        Percentiles rather than averages: the interesting question is
+        "how slow is a slow review", and a mean over a few hundred jobs
+        hides exactly that. p95 is what someone waiting actually notices.
+
+        Computed in Postgres with percentile_cont over the JSONB keys, so
+        adding a stage to the pipeline adds it here with no change: the
+        keys are read from the data rather than listed.
+
+        `repository` None aggregates across every repository, which is the
+        platform-wide view; a repository narrows it to one.
+        """
+        rows = await self._pool.fetch(
+            """
+            WITH scoped AS (
+                SELECT timings
+                FROM analysis_results
+                WHERE started_at >= NOW() - ($2 || ' days')::interval
+                  AND timings <> '{}'::jsonb
+                  AND ($1::text IS NULL OR repository = $1)
+            ),
+            unpacked AS (
+                SELECT key AS phase, (value #>> '{}')::numeric AS ms
+                FROM scoped, jsonb_each(timings)
+            )
+            SELECT phase,
+                   count(*)                                             AS samples,
+                   round(percentile_cont(0.5) WITHIN GROUP (ORDER BY ms))  AS p50_ms,
+                   round(percentile_cont(0.95) WITHIN GROUP (ORDER BY ms)) AS p95_ms,
+                   round(max(ms))                                       AS max_ms
+            FROM unpacked
+            GROUP BY phase
+            ORDER BY p95_ms DESC;
+            """,
+            repository, str(days),
+        )
+
+        return {
+            "days": days,
+            "repository": repository,
+            "phases": [
+                {
+                    "phase": row["phase"],
+                    "samples": row["samples"],
+                    "p50_ms": int(row["p50_ms"]),
+                    "p95_ms": int(row["p95_ms"]),
+                    "max_ms": int(row["max_ms"]),
+                }
+                for row in rows
+            ],
+        }
