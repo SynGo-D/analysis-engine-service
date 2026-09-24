@@ -382,3 +382,21 @@ class AnalysisResultRepository:
                 for row in rows
             ],
         }
+
+    async def update_timings(self, result_id, timings: dict[str, int]) -> None:
+        """
+        Writes the stage timings once the whole job is done.
+
+        A separate update because of when the result is saved: the linter
+        result is persisted before the AI review starts, deliberately, so
+        it can be shown while the review runs. The review's duration
+        therefore does not exist yet at that point, and the total does
+        not either — so the timings cannot be part of that first insert.
+        """
+        if not timings:
+            return
+
+        await self._pool.execute(
+            "UPDATE analysis_results SET timings = $2 WHERE result_id = $1;",
+            result_id, json.dumps(timings),
+        )

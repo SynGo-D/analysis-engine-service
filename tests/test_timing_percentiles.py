@@ -104,3 +104,25 @@ async def test_older_jobs_fall_outside_the_window(repository):
     await repository.save(_result({"ai_review": 500}, days_ago=30))
 
     assert (await repository.timing_percentiles(REPOSITORY, 7))["phases"] == []
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_timings_are_written_after_the_result_already_exists(repository):
+    """
+    The result is saved before the AI review starts, so at that moment
+    the review's duration and the total do not exist yet. Timings have to
+    arrive in a second write — and the first version of this shipped
+    without one, so every stored row kept its empty default while the
+    logs showed the numbers perfectly.
+    """
+    result = _result({})            # exactly what the first insert writes
+    await repository.save(result)
+
+    assert (await repository.get_latest_for_pull_request(REPOSITORY, 1)).timings == {}
+
+    await repository.update_timings(result.result_id, {"ai_review": 27_442, "total": 34_644})
+
+    reloaded = await repository.get_latest_for_pull_request(REPOSITORY, 1)
+    assert reloaded.timings == {"ai_review": 27_442, "total": 34_644}
+    assert (await repository.timing_percentiles(REPOSITORY, 7))["phases"] != []
