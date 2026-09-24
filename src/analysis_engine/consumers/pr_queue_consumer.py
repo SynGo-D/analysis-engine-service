@@ -8,7 +8,7 @@ from pydantic import ValidationError
 from ..application.orchestrator import AnalysisOrchestrator
 from ..config import settings
 from ..domain import AnalysisJob, AnalysisResult
-from ..messaging.topology import PR_QUEUE_NAME
+from ..messaging.topology import PR_QUEUE_ARGUMENTS, PR_QUEUE_NAME
 from ..repositories.agent_review_repository import AgentReviewRepository
 from ..repositories.analysis_result_repository import AnalysisResultRepository
 
@@ -44,8 +44,13 @@ class PRQueueConsumer:
 
         # Idempotent — safe regardless of whether webhook-listener's or
         # this service's declaration reaches the broker first, same
-        # reasoning as webhook-listener's topology.ts.
-        queue = await channel.declare_queue(PR_QUEUE_NAME, durable=True)
+        # reasoning as webhook-listener's topology.ts, *as long as both
+        # pass the same arguments*. They are shared deliberately: queue
+        # arguments are immutable, so a mismatch means whichever service
+        # declares second fails with PRECONDITION_FAILED and crash-loops.
+        queue = await channel.declare_queue(
+            PR_QUEUE_NAME, durable=True, arguments=dict(PR_QUEUE_ARGUMENTS)
+        )
 
         await queue.consume(self._handle_message)
         logger.info(
@@ -90,13 +95,19 @@ class PRQueueConsumer:
             self._log_result(job, result)
 
         except Exception as error:
-            # Phase 10 refines this: distinguishing transient failures
-            # (worth requeuing/retrying) from permanent ones (should go to
-            # a dead-letter queue) needs real retry-count tracking, which
-            # doesn't exist yet. For now: log clearly and drop rather than
-            # requeue, to avoid an infinite redelivery loop while the
-            # orchestrator is still a stub (Phases 4-10).
-            logger.exception("[job:%s] processing failed: %s", job.job_id, error)
+            # requeue=False, but this no longer destroys the job: pr_queue
+            # is declared with a dead-letter exchange, so the message is
+            # parked on pr_queue.dead with an x-death header recording why
+            # and when. It can be inspected and replayed.
+            #
+            # Still not requeued, deliberately — the same job failing the
+            # same way in a loop is worse than one parked message, and
+            # telling a transient failure from a permanent one needs the
+            # retry-count tracking that does not exist yet.
+            logger.exception(
+                "[job:%s] processing failed, dead-lettering to %s: %s",
+                job.job_id, "pr_queue.dead", error,
+            )
             await message.nack(requeue=False)
 
     def _log_result(self, job: AnalysisJob, result: AnalysisResult) -> None:
