@@ -18,6 +18,22 @@ class PullRequestAuthor(BaseModel):
     username: str
 
 
+class HeadRepository(BaseModel):
+    """
+    Where a pull request's source branch actually lives.
+
+    Only sent when it differs from the repository being merged into, which
+    means: this is a fork. The branch exists nowhere else, so fetching it
+    from the base repository fails outright.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    full_name: str = Field(alias="fullName")
+    clone_url: str = Field(alias="cloneUrl")
+    is_private: bool = Field(default=False, alias="isPrivate")
+
+
 class AnalysisJob(BaseModel):
     """
     The job this service consumes from pr_queue.
@@ -64,3 +80,17 @@ class AnalysisJob(BaseModel):
     # account has been deleted. An analysis without an author is still a
     # valid analysis, just an unattributed one.
     author: PullRequestAuthor | None = None
+
+    # Set only for a pull request opened from a fork. Absent for the
+    # ordinary same-repository case, where clone_url already points at the
+    # branch.
+    head: HeadRepository | None = None
+
+    @property
+    def source_clone_url(self) -> str:
+        """The repository the branch can actually be fetched from."""
+        return self.head.clone_url if self.head else self.clone_url
+
+    @property
+    def is_fork(self) -> bool:
+        return self.head is not None
