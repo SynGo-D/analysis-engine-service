@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import shutil
 import tempfile
 from contextlib import asynccontextmanager
@@ -7,7 +8,9 @@ from uuid import UUID
 
 from ..domain import AnalysisJob
 from .credentials import RepositoryCredentials, git_auth_env
-from .git_client import clone_commit
+from .git_client import WorkspaceSecurityError, clone_commit
+
+logger = logging.getLogger(__name__)
 
 
 class Workspace:
@@ -69,7 +72,35 @@ class WorkspaceManager:
 
         try:
             git_env = await self.git_env_for(job.provider, job.repository)
-            await clone_commit(job.clone_url, job.commit_sha, job.branch, workspace_dir, git_env=git_env)
+
+            if job.is_fork:
+                # The branch lives in the contributor's fork, not in the
+                # repository being merged into — fetching it from the base
+                # fails with "couldn't find remote ref", which is how every
+                # fork contribution used to die before it was analysed.
+                #
+                # Cloned anonymously on purpose: the stored token belongs
+                # to whoever connected the *base* repository and grants no
+                # access to somebody else's fork. Sending it there would
+                # hand their credential to a repository they do not own.
+                if job.head is not None and job.head.is_private:
+                    raise WorkspaceSecurityError(
+                        f"{job.head.full_name} is a private fork; its code cannot be fetched "
+                        f"with the base repository's credentials."
+                    )
+
+                logger.info(
+                    "[job:%s] fork pull request: fetching %s from %s",
+                    job.job_id, job.branch, job.head.full_name if job.head else "?",
+                )
+                await clone_commit(
+                    job.source_clone_url, job.commit_sha, job.branch, workspace_dir, git_env={}
+                )
+            else:
+                await clone_commit(
+                    job.clone_url, job.commit_sha, job.branch, workspace_dir, git_env=git_env
+                )
+
             yield Workspace(job_id=job.job_id, path=workspace_dir, git_env=git_env)
 
         finally:
