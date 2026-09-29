@@ -155,7 +155,18 @@ class Settings(BaseSettings):
 
     @property
     def agent_review_available(self) -> bool:
-        return self.agent_review_enabled and self.openai_api_key is not None
+        """
+        An empty key counts as no key.
+
+        OPENAI_API_KEY="" is how a deployment says "no key" — it is what
+        an unset Kubernetes secret value, a blank line in .env and an
+        empty Compose variable all produce. Treating that as a key makes
+        the review look available, and the service then dies at startup
+        building an OpenAI client with nothing in it: "Missing
+        credentials", from a deployment that never asked for the review.
+        """
+        key = self.openai_api_key.get_secret_value() if self.openai_api_key else ""
+        return self.agent_review_enabled and bool(key.strip())
 
 
 settings = Settings()
