@@ -1,0 +1,31 @@
+<?xml version="1.0"?>
+<!--
+Measurement pass — NOT a review. See tools/eslint/measure.config.cjs for
+the full reasoning: the review ruleset reports a method only once it
+breaches a threshold, so an average taken from it describes only the
+methods that were already too complex, and is blank for healthy code.
+
+Report levels of 1 mean "report every method", not "allow none". The
+output never becomes a Finding; metrics/measurement.py reads the measured
+values and discards the rest.
+-->
+<ruleset name="CodePulse Java measurement"
+         xmlns="http://pmd.sourceforge.net/ruleset/2.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://pmd.sourceforge.net/ruleset/2.0.0 https://pmd.sourceforge.io/ruleset_2_0_0.xsd">
+
+  <description>Reports every method's complexity so the dashboard can show a real distribution.</description>
+
+  <rule ref="category/java/design.xml/CyclomaticComplexity">
+    <properties>
+      <property name="methodReportLevel" value="1"/>
+      <property name="classReportLevel" value="1"/>
+    </properties>
+  </rule>
+
+  <rule ref="category/java/design.xml/CognitiveComplexity">
+    <properties>
+      <property name="reportLevel" value="1"/>
+    </properties>
+  </rule>
+</ruleset>
