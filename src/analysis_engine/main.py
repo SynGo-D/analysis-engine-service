@@ -9,6 +9,7 @@ from .config import settings
 from .consumers.pr_queue_consumer import PRQueueConsumer
 from .infrastructure.database import connect_database
 from .infrastructure.rabbitmq import connect_rabbitmq, create_channel
+from .messaging.publisher import AnalysisEventPublisher, declare_analysis_exchange
 from .infrastructure.schema import ensure_schema
 from .repositories.agent_review_repository import AgentReviewRepository
 from .repositories.business_rule_repository import BusinessRuleRepository
@@ -70,8 +71,16 @@ async def lifespan(app: FastAPI):
             feedback_source=app.state.feedback_repository,
         )
     )
+    # Announces finished analyses on analysis.events, which
+    # technical-debt-service consumes to calculate debt without anyone
+    # having to press a button. Best-effort: see messaging/publisher.py.
+    app.state.analysis_publisher = AnalysisEventPublisher(
+        await declare_analysis_exchange(app.state.rabbitmq_channel)
+    )
+
     consumer = PRQueueConsumer(
-        orchestrator, app.state.analysis_result_repository, AgentReviewRepository(app.state.db_pool)
+        orchestrator, app.state.analysis_result_repository, AgentReviewRepository(app.state.db_pool),
+        publisher=app.state.analysis_publisher,
     )
     await consumer.start(app.state.rabbitmq_channel)
 

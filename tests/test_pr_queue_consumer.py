@@ -105,3 +105,74 @@ class TestFailureHandling:
 
         message.ack.assert_awaited_once()
         message.nack.assert_not_awaited()
+
+
+class TestCompletionEvent:
+    """
+    Announcing the analysis, and the two cases where it must not happen.
+    """
+
+    @staticmethod
+    def _consumer(publisher, status="completed"):
+        result = MagicMock(result_id="r1", timings={"total": 10}, status=status, findings=[])
+        orchestrator = MagicMock()
+        orchestrator.run = AsyncMock(return_value=result)
+        repository = MagicMock()
+        repository.update_timings = AsyncMock()
+        return PRQueueConsumer(
+            orchestrator=orchestrator, repository=repository, publisher=publisher
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_completed_analysis_is_announced(self):
+        publisher = MagicMock()
+        publisher.publish_completed = AsyncMock(return_value=True)
+
+        await self._consumer(publisher)._handle_message(_message(_valid_job()))
+
+        publisher.publish_completed.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_an_unsuccessful_analysis_is_not_announced(self):
+        # Downstream consumers exist to act on findings that are there to
+        # be read. A failed run has nothing to offer them.
+        publisher = MagicMock()
+        publisher.publish_completed = AsyncMock()
+
+        await self._consumer(publisher, status="failed")._handle_message(_message(_valid_job()))
+
+        publisher.publish_completed.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_a_failing_analysis_is_not_announced(self):
+        publisher = MagicMock()
+        publisher.publish_completed = AsyncMock()
+        orchestrator = MagicMock()
+        orchestrator.run = AsyncMock(side_effect=RuntimeError("clone exploded"))
+
+        await PRQueueConsumer(
+            orchestrator=orchestrator, repository=MagicMock(), publisher=publisher
+        )._handle_message(_message(_valid_job()))
+
+        publisher.publish_completed.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_the_job_is_still_acked_when_announcing_fails(self):
+        # The ack comes first precisely so this cannot redeliver a job
+        # whose work is done. If this ever fails, the ordering regressed.
+        publisher = MagicMock()
+        publisher.publish_completed = AsyncMock(return_value=False)
+        message = _message(_valid_job())
+
+        await self._consumer(publisher)._handle_message(message)
+
+        message.ack.assert_awaited_once()
+        message.nack.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_works_without_a_publisher_at_all(self):
+        message = _message(_valid_job())
+
+        await self._consumer(None)._handle_message(message)
+
+        message.ack.assert_awaited_once()
