@@ -275,7 +275,14 @@ class AnalysisResultRepository:
                 COALESCE(SUM((l.metrics ->> 'warnings')::int), 0)                 AS warnings,
                 COALESCE(SUM((l.pull_request_changes ->> 'lines_added')::int), 0)   AS lines_added,
                 COALESCE(SUM((l.pull_request_changes ->> 'lines_removed')::int), 0) AS lines_removed,
-                COALESCE(SUM((l.pull_request_changes ->> 'files_changed')::int), 0) AS files_changed
+                COALESCE(SUM((l.pull_request_changes ->> 'files_changed')::int), 0) AS files_changed,
+                -- Which pull requests are this person's, so a caller that
+                -- knows something per pull request — technical-debt-service
+                -- knows the debt — can attribute it without having to ask
+                -- this service who wrote what, one pull request at a time.
+                -- From `latest`, so a pull request appears once however
+                -- often it was pushed to.
+                ARRAY_AGG(l.pull_request_number ORDER BY l.pull_request_number)   AS pull_request_numbers
             FROM latest l
             JOIN runs r ON r.author_username = l.author_username
             GROUP BY l.author_username

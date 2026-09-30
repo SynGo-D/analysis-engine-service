@@ -156,3 +156,39 @@ async def test_busiest_contributor_comes_first(repository):
 async def test_no_contributors_for_an_unknown_repository(repository):
     assert await repository.contributor_summary("nobody/nothing") == []
     assert await repository.contributor_review_findings("nobody/nothing") == {}
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_reports_which_pull_requests_are_whose(repository):
+    """
+    main-backend attributes technical debt by joining these numbers against
+    technical-debt-service's per-pull-request figures. A missing or wrong
+    number silently moves someone else's debt onto a contributor, which is
+    worse than showing none.
+    """
+    await repository.save(_result("amara", 11, issues=1, errors=0, added=5, removed=0, files=1))
+    await repository.save(_result("amara", 12, issues=1, errors=0, added=5, removed=0, files=1))
+    await repository.save(_result("bimal", 13, issues=1, errors=0, added=5, removed=0, files=1))
+
+    rows = {row["username"]: row for row in await repository.contributor_summary(REPOSITORY)}
+
+    assert sorted(rows["amara"]["pull_request_numbers"]) == [11, 12]
+    assert sorted(rows["bimal"]["pull_request_numbers"]) == [13]
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_a_re_analysed_pull_request_is_listed_once(repository):
+    """
+    Same reasoning as the totals above: the numbers come from the latest
+    analysis of each pull request, so a pull request pushed to three times
+    appears once. Listed twice, its debt would be counted twice.
+    """
+    await repository.save(_result("amara", 21, issues=1, errors=0, added=5, removed=0, files=1, minutes_ago=30))
+    await repository.save(_result("amara", 21, issues=1, errors=0, added=5, removed=0, files=1, minutes_ago=10))
+    await repository.save(_result("amara", 21, issues=1, errors=0, added=5, removed=0, files=1))
+
+    rows = {row["username"]: row for row in await repository.contributor_summary(REPOSITORY)}
+
+    assert rows["amara"]["pull_request_numbers"] == [21]

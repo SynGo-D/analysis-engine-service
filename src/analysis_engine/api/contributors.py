@@ -8,15 +8,19 @@ class ContributorDebt(BaseModel):
     """
     Technical debt introduced by one person.
 
-    A placeholder with a real shape. The debt calculation service does not
-    exist yet, so `status` is "pending" and `score` is null for everyone —
-    but the field is here now so that service can fill it without the API
-    or the page changing. A missing field would have meant a second round
-    of changes across three services.
+    Always "pending" as far as THIS service is concerned. The debt lives
+    in technical-debt-service's database, which analysis-engine cannot
+    read — the dependency runs the other way, and reversing it would make
+    two services circular.
 
-    `score` is deliberately unitless here: what it counts (remediation
-    minutes, a weighted index, money) is the debt service's decision, and
-    guessing now would bake in the wrong one.
+    main-backend fills this in: it already calls both services, and it is
+    the only place that can join `pull_request_numbers` above against the
+    debt calculated for each of them. The field stays in this model so the
+    response shape is the same whoever populated it, and the page needs no
+    knowledge of which service answered.
+
+    `score` is remediation minutes, the unit technical-debt-service works
+    in. The page renders it as hours.
     """
 
     score: float | None = None
@@ -41,6 +45,11 @@ class Contributor(BaseModel):
     provider_user_id: str | None = None
 
     pull_requests: int = 0
+    # The pull requests themselves, not just how many. main-backend joins
+    # these against technical-debt-service's per-pull-request debt to fill
+    # the `debt` field below — this service cannot, because it has no
+    # access to that database and no business having one.
+    pull_request_numbers: list[int] = Field(default_factory=list)
     analyses: int = 0
     files_changed: int = 0
     lines_added: int = 0
@@ -87,6 +96,7 @@ async def list_contributors(owner: str, repo: str, request: Request):
             username=row["username"],
             provider_user_id=row["provider_user_id"],
             pull_requests=row["pull_requests"],
+            pull_request_numbers=list(row["pull_request_numbers"] or []),
             analyses=row["analyses"],
             files_changed=row["files_changed"],
             lines_added=row["lines_added"],
