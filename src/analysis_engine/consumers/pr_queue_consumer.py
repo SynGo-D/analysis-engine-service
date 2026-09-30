@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from ..application.orchestrator import AnalysisOrchestrator
 from ..config import settings
 from ..domain import AnalysisJob, AnalysisResult
+from ..messaging.publisher import AnalysisEventPublisher
 from ..messaging.topology import PR_QUEUE_ARGUMENTS, PR_QUEUE_NAME
 from ..repositories.agent_review_repository import AgentReviewRepository
 from ..repositories.analysis_result_repository import AnalysisResultRepository
@@ -30,10 +31,15 @@ class PRQueueConsumer:
         orchestrator: AnalysisOrchestrator,
         repository: AnalysisResultRepository,
         review_repository: AgentReviewRepository | None = None,
+        publisher: AnalysisEventPublisher | None = None,
     ):
         self._orchestrator = orchestrator
         self._repository = repository
         self._review_repository = review_repository
+        # Optional so the consumer can be constructed without a broker
+        # exchange — the tests do, and a deployment without downstream
+        # consumers has nothing to announce to.
+        self._publisher = publisher
 
     async def start(self, channel: AbstractRobustChannel) -> None:
         # Bounds how many unacked jobs this worker holds at once — see
@@ -93,6 +99,13 @@ class PRQueueConsumer:
 
             await message.ack()
             self._log_result(job, result)
+
+            # After the ack, on purpose. The analysis is finished and
+            # persisted; announcing it is a separate concern and must not
+            # be able to turn a completed job into a redelivered one.
+            # publish_completed never raises, so nothing here can.
+            if self._publisher is not None and result.status == "completed":
+                await self._publisher.publish_completed(job, result)
 
         except Exception as error:
             # requeue=False, but this no longer destroys the job: pr_queue
