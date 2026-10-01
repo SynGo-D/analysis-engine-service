@@ -58,13 +58,20 @@ module.exports = [
     },
   },
   {
-    // Plain JS/JSX: the TypeScript plugin isn't registered for these
-    // files (typescript-eslint's own recommended config scopes itself to
-    // **/*.ts[x]), so unused-vars checking here has to go through core
-    // ESLint's own rule, not @typescript-eslint/no-unused-vars.
+    // Plain JS/JSX: core ESLint's own rule, because the TypeScript
+    // version mishandles type-only constructs that do not exist here.
+    //
+    // The plugin's rule has to be turned OFF explicitly. The comment that
+    // used to sit here said typescript-eslint's recommended config scopes
+    // itself to **/*.ts[x] — it does not, it applies to every file, so
+    // both rules fired on the same line of every .js file and reported the
+    // same unused variable twice. That inflated finding counts and, once
+    // debt was calculated from them, remediation estimates and cost with
+    // it: four of seventy-two findings on one measured pull request.
     files: ["**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"],
     rules: {
       "no-unused-vars": "error",
+      "@typescript-eslint/no-unused-vars": "off",
     },
   },
   {
